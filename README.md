@@ -134,8 +134,12 @@ Automate's login page now also offers **Sign in with MetaMask**, using Sign-In w
 
 - **Linking.** Automate is invite-only, so a wallet is first **linked** to an existing account, from Settings while signed in.
 - **Signing in.** The wallet signs a one-time message (domain, origin, nonce, a 10-minute window, and a statement for what it is for). The server checks the message and opens a session for **that** account. It uses a one-time Supabase token, and no email is sent.
+- **Two ways to sign:** the **browser extension** signs on the page, or a **QR code** opens the request in the **MetaMask app** on a phone, which signs there while the computer waits and is then signed in.
+  - The QR request's secret stays in the computer's httpOnly cookie, so the id in the QR is not enough to collect the session.
+  - The phone's message names the request (EIP-4361 `Request ID`); each request is single-use and lasts 3 minutes.
+  - Both screens show the same two-digit code. Linking works the same way from Settings, and the phone shows which account (masked) it links to.
 - **Unlinked wallets** get no session, and a new account is never created.
-- **Tests:** 24 checks, covering replays, other websites, wrong statements, another wallet's signature, and one wallet per account.
+- **Tests:** 32 checks for the extension path (replays, other websites, wrong statements, another wallet's signature, one wallet per account) and 39 for the QR path (no cookie or another browser's secret, a message for another request, expiry, single use, the status route setting the session).
 
 ## Knowledge service (Python)
 

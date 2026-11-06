@@ -70,7 +70,7 @@ export function parseSiwe(message) {
     address: getAddress(lines[1]),
     statement: lines[2] === '' && lines[3] && !/^[A-Z][\w ]+: /.test(lines[3]) ? lines[3] : '',
     uri: field('URI'), version: field('Version'), chainId: field('Chain ID'), nonce: field('Nonce'),
-    issuedAt: field('Issued At'), expirationTime: field('Expiration Time'),
+    issuedAt: field('Issued At'), expirationTime: field('Expiration Time'), requestId: field('Request ID'),
   }
 }
 
@@ -112,7 +112,7 @@ export function readNonceCookie(request) {
  * `cookieNonce` is readNonceCookie(request). Returns { ok: true, address } or
  * { ok: false, reason } — never throws.
  */
-export function verifyWalletMessage({ message, signature, request, purpose, cookieNonce }) {
+export function verifyWalletMessage({ message, signature, request, purpose, cookieNonce, requestId = '' }) {
   const m = parseSiwe(message)
   if (!m) return { ok: false, reason: 'That was not a sign-in message.' }
   void request
@@ -124,6 +124,8 @@ export function verifyWalletMessage({ message, signature, request, purpose, cook
   if (!cookieNonce || m.nonce !== cookieNonce) return { ok: false, reason: 'This sign-in request belongs to another browser or page. Reload and try again.' }
   if (m.version !== '1') return { ok: false, reason: 'Unsupported sign-in message.' }
   if (m.statement !== STATEMENTS[purpose]) return { ok: false, reason: 'The message was for something else.' }
+  /* A phone's QR signature names the request it answers; nothing else may carry one. */
+  if (m.requestId !== String(requestId || '')) return { ok: false, reason: 'The message was for something else.' }
   const issued = Date.parse(m.issuedAt)
   if (!issued || issued > Date.now() + 60_000 || Date.now() - issued > NONCE_TTL_MS) return { ok: false, reason: 'The message is too old. Try again.' }
   if (m.expirationTime && Date.parse(m.expirationTime) < Date.now()) return { ok: false, reason: 'The message has expired. Try again.' }
@@ -186,4 +188,108 @@ export async function sessionForAccount(supabase, userId) {
   } catch (e) {
     return { ok: false, reason: /UUID/.test(e.message) ? 'The linked account could not be found.' : 'Sign-in failed. Try again.' }
   }
+}
+
+/* ---- QR: MetaMask on a phone, for this computer (6 Nov 2026) ----
+ *
+ * The computer asks for a QR request (startQr) and keeps its SECRET in an
+ * httpOnly cookie; the QR opens /wallet/qr/<id> in the MetaMask app, which
+ * signs a message naming that id (approveQr, with the phone's own nonce
+ * cookie). Only the browser holding the secret can then collect the result
+ * (claimQr) — the id alone, seen on the screen or in the QR, is not enough.
+ *
+ *   signin: the wallet must already be linked; the computer gets the session.
+ *   link:   made while signed in, so the request carries that account; the
+ *           phone's signature links the wallet to it (the phone shows which,
+ *           masked) and the computer just reloads.
+ *
+ * Each request is single-use and lives QR_TTL_MS. Both screens show the same
+ * two-digit code, so someone shown a code that is not theirs can tell.
+ */
+const QR_TTL_MS = 3 * 60_000
+const MAX_QR = 1_000
+export const QR_COOKIE = 'automate_qr'
+const QR_PURPOSE = { signin: 'qrsignin', link: 'qrlink' }
+const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex')
+const qrAll = () => readJson('wallet-qr.json', {})
+const qrSave = (all) => {
+  const now = Date.now()
+  writeJson('wallet-qr.json', Object.fromEntries(Object.entries(all).filter(([, r]) => r.exp > now).slice(-MAX_QR)))
+}
+
+/** A new QR request. Returns { id, secret, code, expiresAt } — the secret goes ONLY in qrCookie. */
+export function startQr({ purpose, userId = null, email = '' }) {
+  if (!QR_PURPOSE[purpose]) throw new Error('Unknown QR purpose.')
+  if (purpose === 'link' && !userId) throw new Error('Linking needs a signed-in account.')
+  const id = crypto.randomBytes(16).toString('hex')
+  const secret = crypto.randomBytes(16).toString('hex')
+  const code = String(crypto.randomInt(10, 100))
+  const expiresAt = Date.now() + QR_TTL_MS
+  const all = qrAll()
+  all[id] = { purpose, secret: sha(secret), code, userId: purpose === 'link' ? userId : null, email: purpose === 'link' ? String(email || '') : '', status: 'pending', exp: expiresAt }
+  qrSave(all)
+  return { id, secret, code, expiresAt }
+}
+
+const secureReq = (request) => new URL(request.url).protocol === 'https:' || String(request.headers.get('x-forwarded-proto') || '').startsWith('https')
+export function qrCookie({ id, secret }, request) {
+  return `${QR_COOKIE}=${id}.${secret}; Path=/; Max-Age=${QR_TTL_MS / 1000}; HttpOnly; SameSite=Lax${secureReq(request) ? '; Secure' : ''}`
+}
+export function clearQrCookie(request) {
+  return `${QR_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureReq(request) ? '; Secure' : ''}`
+}
+function readQrCookie(request) {
+  const m = String(request.headers.get('cookie') || '').match(new RegExp(`(?:^|;\\s*)${QR_COOKIE}=([0-9a-f]{32})\\.([0-9a-f]{32})(?:;|$)`))
+  return m ? { id: m[1], secret: m[2] } : null
+}
+
+const maskEmail = (e) => { const [u, d] = String(e || '').split('@'); return d ? `${u.slice(0, 1)}•••@${d}` : '' }
+
+/** What the phone page may show about a request, or null if it is gone, used or expired. */
+export function qrRequest(id) {
+  const r = /^[0-9a-f]{32}$/.test(String(id || '')) ? qrAll()[id] : null
+  if (!r || r.exp <= Date.now() || r.status !== 'pending') return null
+  return { purpose: r.purpose, statement: QR_PURPOSE[r.purpose], code: r.code, account: maskEmail(r.email), expiresAt: r.exp }
+}
+
+/** The phone signed. Returns { ok: true, purpose } or { ok: false, reason } — never throws. */
+export function approveQr({ id, message, signature, request, cookieNonce }) {
+  const gone = { ok: false, reason: 'This code has expired or was already used. Make a new one on your computer.' }
+  const pending = qrRequest(id)
+  if (!pending) return gone
+  const v = verifyWalletMessage({ message, signature, request, purpose: pending.statement, cookieNonce, requestId: id })
+  if (!v.ok) return v
+  const all = qrAll()
+  const r = all[id]
+  if (!r || r.status !== 'pending' || r.exp <= Date.now()) return gone
+  if (r.purpose === 'signin') {
+    const acct = accountOf(v.address)
+    if (!acct) return { ok: false, reason: 'This wallet is not linked to an account yet. Sign in with your email on your computer, then link it under Settings → Sign in with MetaMask.' }
+    r.userId = acct.userId
+  } else {
+    const l = linkWallet({ userId: r.userId, email: r.email, address: v.address })
+    if (!l.ok) return l
+  }
+  Object.assign(r, { status: 'approved', address: v.address })
+  qrSave(all)
+  return { ok: true, purpose: r.purpose }
+}
+
+/**
+ * The computer asks how its request is doing. Only the browser holding the
+ * request's secret gets an answer about it; an approved request is handed out
+ * once and then deleted. Returns { status: 'pending' | 'expired' | 'approved', ... }.
+ */
+export function claimQr(request) {
+  const c = readQrCookie(request)
+  if (!c) return { status: 'expired' }
+  const all = qrAll()
+  const r = all[c.id]
+  if (!r || r.exp <= Date.now()) return { status: 'expired' }
+  const a = Buffer.from(sha(c.secret)), b = Buffer.from(String(r.secret))
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { status: 'expired' }
+  if (r.status !== 'approved') return { status: 'pending' }
+  delete all[c.id]
+  qrSave(all)
+  return { status: 'approved', purpose: r.purpose, userId: r.userId, address: r.address }
 }

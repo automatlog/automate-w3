@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { Form, Link, data, useActionData, useLoaderData, useNavigation, useSubmit } from 'react-router'
+import { useCallback } from 'react'
+import { Form, Link, data, useActionData, useLoaderData, useNavigation, useRevalidator, useSubmit } from 'react-router'
 import { requireUser } from '../lib/supabase.server'
-import { issueNonce, nonceCookie, readNonceCookie, verifyWalletMessage, linkWallet, unlinkWallet, walletOf } from '../lib/wallet-auth.server'
-import { signWithMetaMask } from '../lib/wallet-client'
+import { issueNonce, nonceCookie, readNonceCookie, verifyWalletMessage, linkWallet, unlinkWallet, walletOf, startQr, qrCookie } from '../lib/wallet-auth.server'
+import WalletChoice from '../components/WalletChoice'
 import styles from './login.module.css'
 
 /**
@@ -32,6 +32,12 @@ export async function action({ request }) {
     unlinkWallet(user.id)
     return data({ ok: 'MetaMask is no longer linked. Sign in with your email.' }, { headers })
   }
+  /* Link from the MetaMask app on a phone: the request carries THIS account. */
+  if (intent === 'qr') {
+    const q = startQr({ purpose: 'link', userId: user.id, email: user.email })
+    headers.append('Set-Cookie', qrCookie(q, request))
+    return data({ qr: { id: q.id, code: q.code, expiresAt: q.expiresAt } }, { headers })
+  }
   if (intent === 'link') {
     const v = verifyWalletMessage({ message: String(form.get('message') ?? ''), signature: String(form.get('signature') ?? ''), request, purpose: 'link', cookieNonce: readNonceCookie(request) })
     if (!v.ok) return data({ error: v.reason }, { headers })
@@ -48,22 +54,11 @@ export default function WalletLink() {
   const actionData = useActionData()
   const submit = useSubmit()
   const navigation = useNavigation()
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const working = busy || navigation.state !== 'idle'
+  const revalidator = useRevalidator()
+  const working = navigation.state !== 'idle'
 
-  const link = async () => {
-    setErr('')
-    setBusy(true)
-    try {
-      const { message, signature } = await signWithMetaMask({ nonce, purpose: 'link' })
-      submit({ intent: 'link', message, signature }, { method: 'post' })
-    } catch (e) {
-      setErr(e.message)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const linkSigned = ({ message, signature }) => submit({ intent: 'link', message, signature }, { method: 'post' })
+  const phoneDone = useCallback(() => { revalidator.revalidate() }, [revalidator])
 
   return (
     <div className={styles.page}>
@@ -74,7 +69,7 @@ export default function WalletLink() {
             <p className={styles.lead}>
               {wallet
                 ? `Linked to ${short(wallet)}. You can sign in with this wallet instead of your password.`
-                : 'Link your MetaMask wallet to this account, then use “Sign in with MetaMask” on the login page.'}
+                : 'Link your MetaMask wallet to this account — from the browser extension, or from the MetaMask app by scanning a QR code — then use “Sign in with MetaMask” on the login page.'}
             </p>
           </div>
 
@@ -84,12 +79,10 @@ export default function WalletLink() {
               <button className={styles.wallet} type="submit" disabled={working}>Unlink this wallet</button>
             </Form>
           ) : (
-            <button className={styles.submit} type="button" onClick={link} disabled={working}>
-              {busy ? 'Waiting for MetaMask…' : 'Link MetaMask'}
-            </button>
+            <WalletChoice nonce={nonce} purpose="link" onSigned={linkSigned} onDone={phoneDone} disabled={working} />
           )}
 
-          {(err || actionData?.error) && <p className={styles.error} role="alert">{err || actionData.error}</p>}
+          {actionData?.error && <p className={styles.error} role="alert">{actionData.error}</p>}
           {actionData?.ok && <p className={styles.note} role="status">{actionData.ok}</p>}
 
           <p className={styles.note}>Signing proves the wallet is yours; nothing is sent on chain and it costs nothing.</p>
