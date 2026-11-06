@@ -40,7 +40,11 @@ const JWKS_TTL = 10 * 60_000
 
 const env = (k) => String(process.env[k] || '').trim()
 const issuer = () => (env('WORLD_OIDC_ISSUER') || 'https://auth.world.org').replace(/\/+$/, '')
-const worldEnv = () => (env('WORLD_ENV').toLowerCase() === 'production' ? 'production' : 'staging')
+/* "sandbox" = the World ID (Sandbox) app from the Developer Portal's sandbox
+   panel, with fake identities (docs.world.org/world-id/sandbox/sandbox-access);
+   "staging" = the web simulator; "production" = real World IDs. Anything else
+   falls back to staging, never to production. */
+const worldEnv = () => ({ production: 'production', sandbox: 'sandbox' })[env('WORLD_ENV').toLowerCase()] || 'staging'
 const verifyBase = () => (env('WORLD_VERIFY_BASE') || 'https://developer.world.org').replace(/\/+$/, '')
 
 /** What is set and what is missing — names only, never values. */
