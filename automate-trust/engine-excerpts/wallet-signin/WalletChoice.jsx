@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useFetcher } from 'react-router'
 import qrcode from 'qrcode-generator'
+import { IconWallet, IconPuzzle, IconQrcode } from '@tabler/icons-react'
 import { signWithMetaMask, metamaskAppLink } from '../lib/wallet-client'
 import styles from '../routes/login.module.css'
 
 /**
  * MetaMask, two ways (6 Nov 2026).
+ *
+ *   One green button first; pressing it swaps in the two ways as icon
+ *   buttons (onOpenChange lets the page hide its password form meanwhile).
  *
  *   Extension — MetaMask in this browser signs right here; the page's own
  *               action checks it (onSigned does the submit).
@@ -29,8 +33,9 @@ const ask = async (code = '') => {
   return r.json()
 }
 
-export default function WalletChoice({ nonce, purpose, onSigned, onDone, disabled }) {
+export default function WalletChoice({ nonce, purpose, onSigned, onDone, disabled, defaultOpen = false, onOpenChange }) {
   const fetcher = useFetcher()
+  const [open, setOpen] = useState(defaultOpen)
   const [code, setCode] = useState('')
   const [checking, setChecking] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -55,6 +60,7 @@ export default function WalletChoice({ nonce, purpose, onSigned, onDone, disable
     fetcher.submit({ intent: 'qr' }, { method: 'post' })
   }
   const back = () => { setQr(null); setPhase(''); setErr(''); setCode('') }
+  const show = (v) => { setOpen(v); setErr(''); onOpenChange?.(v) }
 
   /* The phone has signed: the code it shows proves this person holds it. */
   const confirm = async (e) => {
@@ -114,15 +120,25 @@ export default function WalletChoice({ nonce, purpose, onSigned, onDone, disable
 
   return (
     <div className={styles.walletBox}>
-      {!qr ? (
-        <div className={styles.walletRow}>
-          <button className={styles.wallet} type="button" onClick={extension} disabled={off}>
-            {busy ? 'Waiting for MetaMask…' : 'Browser extension'}
-          </button>
-          <button className={styles.wallet} type="button" onClick={startQr} disabled={off}>
-            {fetcher.state !== 'idle' ? 'Making a code…' : 'QR code (phone)'}
-          </button>
-        </div>
+      {!open ? (
+        <button className={styles.walletMain} type="button" onClick={() => show(true)} disabled={disabled}>
+          <IconWallet size={18} stroke={1.8} aria-hidden="true" />
+          {purpose === 'link' ? 'Link MetaMask' : 'Sign in with MetaMask'}
+        </button>
+      ) : !qr ? (
+        <>
+          <div className={styles.iconRow}>
+            <button className={styles.iconBtn} type="button" onClick={extension} disabled={off} aria-label="MetaMask browser extension">
+              <IconPuzzle size={28} stroke={1.6} aria-hidden="true" />
+              <span>{busy ? 'Waiting…' : 'Extension'}</span>
+            </button>
+            <button className={styles.iconBtn} type="button" onClick={startQr} disabled={off} aria-label="QR code for the MetaMask app on your phone">
+              <IconQrcode size={28} stroke={1.6} aria-hidden="true" />
+              <span>{fetcher.state !== 'idle' ? 'Making…' : 'QR code'}</span>
+            </button>
+          </div>
+          <button className={styles.textBack} type="button" onClick={() => show(false)} disabled={busy}>{purpose === 'link' ? 'Cancel' : 'Use email instead'}</button>
+        </>
       ) : (
         <div className={styles.qr}>
           {phase === 'waiting' && <img className={styles.qrImg} src={qr.img} width="208" height="208" alt="QR code that opens this request in the MetaMask app" />}

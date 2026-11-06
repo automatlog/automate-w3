@@ -1,8 +1,9 @@
 /*
  * EXCERPT from Automate's private engine (app/routes/login.jsx — the MetaMask branches of the sign-in action), ETHGlobal Mumbai, 6 Nov 2026.
  * Shown for review: it runs inside Automate (automateplatform.in) and does not
- * run on its own here. The page shows two choices under the password form —
- * "Browser extension" and "QR code (phone)" — from WalletChoice.jsx.
+ * run on its own here. Under the password form sits one green "Sign in with
+ * MetaMask" button; pressing it hides the form and shows two icon buttons —
+ * Extension and QR code — from WalletChoice.jsx ("Use email instead" goes back).
  */
 
   /* MetaMask on a phone (6 Nov 2026): a QR request whose secret stays in this
