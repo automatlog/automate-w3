@@ -1,0 +1,17 @@
+{
+  "name": "automate-trust",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trust steps for Automate's flow builder: World ID approval and proof of human, USDC on Arc, run records on 0G. ETHGlobal Mumbai 2026.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node scripts/test-trust-world.mjs && node scripts/test-trust-arc.mjs"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "1.2.13",
+    "@worldcoin/idkit-core": "4.6.0",
+    "ethers": "6.13.1"
+  }
+}
