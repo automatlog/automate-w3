@@ -36,7 +36,7 @@ export async function action({ request }) {
   if (intent === 'qr') {
     const q = startQr({ purpose: 'link', userId: user.id, email: user.email })
     headers.append('Set-Cookie', qrCookie(q, request))
-    return data({ qr: { id: q.id, code: q.code, expiresAt: q.expiresAt } }, { headers })
+    return data({ qr: { id: q.id, expiresAt: q.expiresAt } }, { headers })
   }
   if (intent === 'link') {
     const v = verifyWalletMessage({ message: String(form.get('message') ?? ''), signature: String(form.get('signature') ?? ''), request, purpose: 'link', cookieNonce: readNonceCookie(request) })

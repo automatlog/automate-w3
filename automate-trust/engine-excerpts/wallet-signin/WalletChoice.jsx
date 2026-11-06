@@ -12,19 +12,31 @@ import styles from '../routes/login.module.css'
  *   QR code   — the page's action makes a QR request (intent "qr") and sets
  *               its secret in an httpOnly cookie; the QR opens the request in
  *               the MetaMask app on a phone, which signs there. This page asks
- *               /wallet/qr-status every POLL_MS until the phone is done, the
- *               code expires, or the person goes back.
- *
- * Both screens show the same two-digit code (wallet-auth.server.js, startQr).
+ *               /wallet/qr-status every POLL_MS until the phone has signed,
+ *               then asks for the 6-digit code the PHONE shows — the guard
+ *               against a QR relayed from someone else's screen
+ *               (wallet-auth.server.js, claimQr).
  */
 const POLL_MS = 2_000
 
+const ask = async (code = '') => {
+  const r = await fetch('/wallet/qr-status', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(code ? { code } : {}),
+  })
+  return r.json()
+}
+
 export default function WalletChoice({ nonce, purpose, onSigned, onDone, disabled }) {
   const fetcher = useFetcher()
+  const [code, setCode] = useState('')
+  const [checking, setChecking] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [qr, setQr] = useState(null) // { id, code, expiresAt, img, phoneUrl }
-  const [phase, setPhase] = useState('') // '' | 'waiting' | 'expired' | 'done'
+  const [phase, setPhase] = useState('') // '' | 'waiting' | 'confirm' | 'expired' | 'done'
 
   const extension = async () => {
     setErr('')
@@ -42,7 +54,27 @@ export default function WalletChoice({ nonce, purpose, onSigned, onDone, disable
     setErr('')
     fetcher.submit({ intent: 'qr' }, { method: 'post' })
   }
-  const back = () => { setQr(null); setPhase(''); setErr('') }
+  const back = () => { setQr(null); setPhase(''); setErr(''); setCode('') }
+
+  /* The phone has signed: the code it shows proves this person holds it. */
+  const confirm = async (e) => {
+    e.preventDefault()
+    if (code.replace(/\D/g, '').length !== 6) { setErr('Type the 6 digits your phone shows.'); return }
+    setErr('')
+    setChecking(true)
+    try {
+      const j = await ask(code)
+      if (j.status === 'done') { setPhase('done'); onDone(); return }
+      if (j.status === 'confirm') { setErr(j.wrong ? `That code is not right — ${j.left} ${j.left === 1 ? 'try' : 'tries'} left.` : 'Type the 6 digits your phone shows.'); return }
+      if (j.status === 'error') { setErr(j.reason || 'That did not work. Make a new QR code.'); setPhase('expired'); return }
+      setErr('This request has ended. Make a new QR code.')
+      setPhase('expired')
+    } catch {
+      setErr('That did not go through. Try again.')
+    } finally {
+      setChecking(false)
+    }
+  }
 
   /* The action answered with a new request: draw its QR. */
   useEffect(() => {
@@ -66,10 +98,9 @@ export default function WalletChoice({ nonce, purpose, onSigned, onDone, disable
       if (stop) return
       if (Date.now() > qr.expiresAt) { setPhase('expired'); return }
       try {
-        const r = await fetch('/wallet/qr-status', { method: 'POST', credentials: 'same-origin' })
-        const j = await r.json()
+        const j = await ask()
         if (stop) return
-        if (j.status === 'done') { setPhase('done'); onDone(); return }
+        if (j.status === 'confirm') { setPhase('confirm'); return }
         if (j.status === 'expired') { setPhase('expired'); return }
         if (j.status === 'error') { setErr(j.reason || 'That did not work. Make a new code.'); setPhase('expired'); return }
       } catch { /* a dropped poll is retried on the next tick */ }
@@ -77,7 +108,7 @@ export default function WalletChoice({ nonce, purpose, onSigned, onDone, disable
     }
     timer = setTimeout(tick, POLL_MS)
     return () => { stop = true; clearTimeout(timer) }
-  }, [phase, qr, onDone])
+  }, [phase, qr])
 
   const off = disabled || busy || fetcher.state !== 'idle'
 
@@ -96,13 +127,30 @@ export default function WalletChoice({ nonce, purpose, onSigned, onDone, disable
         <div className={styles.qr}>
           {phase === 'waiting' && <img className={styles.qrImg} src={qr.img} width="208" height="208" alt="QR code that opens this request in the MetaMask app" />}
           <p className={styles.qrText}>
-            {phase === 'waiting' && <>Scan with your phone’s camera. It opens in the MetaMask app, which shows code <b>{qr.code}</b> — sign there.</>}
-            {phase === 'expired' && 'This code expired.'}
-            {phase === 'done' && (purpose === 'link' ? 'Linked on your phone.' : 'Signed on your phone. Opening your workspace…')}
+            {phase === 'waiting' && 'Scan with your phone’s camera. It opens in the MetaMask app — sign there, and it shows a 6-digit code.'}
+            {phase === 'confirm' && 'Your phone signed. Type the 6-digit code it shows.'}
+            {phase === 'expired' && 'This QR code has expired.'}
+            {phase === 'done' && (purpose === 'link' ? 'Linked.' : 'Signed in. Opening your workspace…')}
           </p>
           {phase === 'waiting' && <p className={styles.qrWait} role="status">Waiting for your phone…</p>}
+          {phase === 'confirm' && (
+            <form className={styles.confirmForm} onSubmit={confirm}>
+              <input
+                className={`${styles.input} ${styles.confirmInput}`}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={7}
+                autoFocus
+                aria-label="6-digit code from your phone"
+                placeholder="000 000"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, ''))}
+              />
+              <button className={styles.submit} type="submit" disabled={checking}>{checking ? 'Checking…' : 'Confirm code'}</button>
+            </form>
+          )}
           <div className={styles.walletRow}>
-            {phase === 'expired' && <button className={styles.wallet} type="button" onClick={startQr} disabled={off}>Make a new code</button>}
+            {phase === 'expired' && <button className={styles.wallet} type="button" onClick={startQr} disabled={off}>Make a new QR code</button>}
             {phase !== 'done' && <button className={styles.wallet} type="button" onClick={back}>Back</button>}
           </div>
         </div>

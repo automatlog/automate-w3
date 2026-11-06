@@ -9,7 +9,7 @@
      browser's cookie; WalletChoice shows the QR and waits (wallet-qr-status). */
   if (form.get('intent') === 'qr') {
     const q = startQr({ purpose: 'signin' })
-    return data({ qr: { id: q.id, code: q.code, expiresAt: q.expiresAt } }, { headers: { 'Set-Cookie': qrCookie(q, request) } })
+    return data({ qr: { id: q.id, expiresAt: q.expiresAt } }, { headers: { 'Set-Cookie': qrCookie(q, request) } })
   }
 
   /* Sign in with MetaMask (6 Nov 2026): only a wallet LINKED to an existing

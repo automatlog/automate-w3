@@ -137,9 +137,10 @@ Automate's login page now also offers **Sign in with MetaMask**, using Sign-In w
 - **Two ways to sign:** the **browser extension** signs on the page, or a **QR code** opens the request in the **MetaMask app** on a phone, which signs there while the computer waits and is then signed in.
   - The QR request's secret stays in the computer's httpOnly cookie, so the id in the QR is not enough to collect the session.
   - The phone's message names the request (EIP-4361 `Request ID`); each request is single-use and lasts 3 minutes.
-  - Both screens show the same two-digit code. Linking works the same way from Settings, and the phone shows which account (masked) it links to.
+  - **Relay guard:** after signing, the phone shows a 6-digit code that only the phone sees, and the computer must type it before it is signed in (or the wallet is linked). A QR relayed from someone else's screen gets them nothing; 5 wrong codes end the request.
+  - Linking works the same way from Settings, and the phone shows which account (masked) it links to.
 - **Unlinked wallets** get no session, and a new account is never created.
-- **Tests:** 32 checks for the extension path (replays, other websites, wrong statements, another wallet's signature, one wallet per account) and 39 for the QR path (no cookie or another browser's secret, a message for another request, expiry, single use, the status route setting the session).
+- **Tests:** 32 checks for the extension path (replays, other websites, wrong statements, another wallet's signature, one wallet per account) and 49 for the QR path (no cookie or another browser's secret, the relay guard and its 5-try limit, a message for another request, expiry, single use, the status route setting the session only after the code).
 
 ## Knowledge service (Python)
 

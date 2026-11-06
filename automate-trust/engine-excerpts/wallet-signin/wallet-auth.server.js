@@ -198,42 +198,51 @@ export async function sessionForAccount(supabase, userId) {
  * cookie). Only the browser holding the secret can then collect the result
  * (claimQr) — the id alone, seen on the screen or in the QR, is not enough.
  *
- *   signin: the wallet must already be linked; the computer gets the session.
- *   link:   made while signed in, so the request carries that account; the
- *           phone's signature links the wallet to it (the phone shows which,
- *           masked) and the computer just reloads.
+ * THE CONFIRMATION CODE (security review, 6 Nov): a QR can be relayed — a
+ * phishing page shows the victim a QR the attacker's own computer made, the
+ * victim signs on their phone, and without more the ATTACKER's computer would
+ * be signed in. So approving makes a 6-digit code that only the PHONE shows,
+ * and the computer must type it before claimQr gives anything out. A relayed
+ * QR leaves the attacker without the code. MAX_TRIES wrong codes end the request.
  *
- * Each request is single-use and lives QR_TTL_MS. Both screens show the same
- * two-digit code, so someone shown a code that is not theirs can tell.
+ *   signin: the wallet must already be linked; after the code, the computer
+ *           gets the session.
+ *   link:   made while signed in, so the request carries that account; the
+ *           phone shows which (masked); after the code, the wallet is linked.
+ *
+ * Each request is single-use, lives QR_TTL_MS to be scanned and CONFIRM_MS
+ * after the phone signs to type the code.
  */
 const QR_TTL_MS = 3 * 60_000
+const CONFIRM_MS = 3 * 60_000
+const MAX_TRIES = 5
 const MAX_QR = 1_000
 export const QR_COOKIE = 'automate_qr'
 const QR_PURPOSE = { signin: 'qrsignin', link: 'qrlink' }
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex')
+const sameHash = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y) }
 const qrAll = () => readJson('wallet-qr.json', {})
 const qrSave = (all) => {
   const now = Date.now()
   writeJson('wallet-qr.json', Object.fromEntries(Object.entries(all).filter(([, r]) => r.exp > now).slice(-MAX_QR)))
 }
 
-/** A new QR request. Returns { id, secret, code, expiresAt } — the secret goes ONLY in qrCookie. */
+/** A new QR request. Returns { id, secret, expiresAt } — the secret goes ONLY in qrCookie. */
 export function startQr({ purpose, userId = null, email = '' }) {
   if (!QR_PURPOSE[purpose]) throw new Error('Unknown QR purpose.')
   if (purpose === 'link' && !userId) throw new Error('Linking needs a signed-in account.')
   const id = crypto.randomBytes(16).toString('hex')
   const secret = crypto.randomBytes(16).toString('hex')
-  const code = String(crypto.randomInt(10, 100))
   const expiresAt = Date.now() + QR_TTL_MS
   const all = qrAll()
-  all[id] = { purpose, secret: sha(secret), code, userId: purpose === 'link' ? userId : null, email: purpose === 'link' ? String(email || '') : '', status: 'pending', exp: expiresAt }
+  all[id] = { purpose, secret: sha(secret), userId: purpose === 'link' ? userId : null, email: purpose === 'link' ? String(email || '') : '', status: 'pending', exp: expiresAt }
   qrSave(all)
-  return { id, secret, code, expiresAt }
+  return { id, secret, expiresAt }
 }
 
 const secureReq = (request) => new URL(request.url).protocol === 'https:' || String(request.headers.get('x-forwarded-proto') || '').startsWith('https')
 export function qrCookie({ id, secret }, request) {
-  return `${QR_COOKIE}=${id}.${secret}; Path=/; Max-Age=${QR_TTL_MS / 1000}; HttpOnly; SameSite=Lax${secureReq(request) ? '; Secure' : ''}`
+  return `${QR_COOKIE}=${id}.${secret}; Path=/; Max-Age=${(QR_TTL_MS + CONFIRM_MS) / 1000}; HttpOnly; SameSite=Lax${secureReq(request) ? '; Secure' : ''}`
 }
 export function clearQrCookie(request) {
   return `${QR_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureReq(request) ? '; Secure' : ''}`
@@ -249,12 +258,15 @@ const maskEmail = (e) => { const [u, d] = String(e || '').split('@'); return d ?
 export function qrRequest(id) {
   const r = /^[0-9a-f]{32}$/.test(String(id || '')) ? qrAll()[id] : null
   if (!r || r.exp <= Date.now() || r.status !== 'pending') return null
-  return { purpose: r.purpose, statement: QR_PURPOSE[r.purpose], code: r.code, account: maskEmail(r.email), expiresAt: r.exp }
+  return { purpose: r.purpose, statement: QR_PURPOSE[r.purpose], account: maskEmail(r.email), expiresAt: r.exp }
 }
 
-/** The phone signed. Returns { ok: true, purpose } or { ok: false, reason } — never throws. */
+/**
+ * The phone signed. Returns { ok: true, purpose, confirmCode } — the code is
+ * shown on the PHONE only — or { ok: false, reason }. Never throws.
+ */
 export function approveQr({ id, message, signature, request, cookieNonce }) {
-  const gone = { ok: false, reason: 'This code has expired or was already used. Make a new one on your computer.' }
+  const gone = { ok: false, reason: 'This QR code has expired or was already used. Make a new one on your computer.' }
   const pending = qrRequest(id)
   if (!pending) return gone
   const v = verifyWalletMessage({ message, signature, request, purpose: pending.statement, cookieNonce, requestId: id })
@@ -262,34 +274,50 @@ export function approveQr({ id, message, signature, request, cookieNonce }) {
   const all = qrAll()
   const r = all[id]
   if (!r || r.status !== 'pending' || r.exp <= Date.now()) return gone
+  const acct = accountOf(v.address)
   if (r.purpose === 'signin') {
-    const acct = accountOf(v.address)
     if (!acct) return { ok: false, reason: 'This wallet is not linked to an account yet. Sign in with your email on your computer, then link it under Settings → Sign in with MetaMask.' }
     r.userId = acct.userId
-  } else {
-    const l = linkWallet({ userId: r.userId, email: r.email, address: v.address })
-    if (!l.ok) return l
+  } else if (acct && acct.userId !== r.userId) {
+    return { ok: false, reason: 'This wallet is already linked to another account.' }
   }
-  Object.assign(r, { status: 'approved', address: v.address })
+  const confirmCode = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0')
+  Object.assign(r, { status: 'approved', address: v.address, confirm: sha(confirmCode), tries: 0, exp: Date.now() + CONFIRM_MS })
   qrSave(all)
-  return { ok: true, purpose: r.purpose }
+  return { ok: true, purpose: r.purpose, confirmCode }
 }
 
 /**
- * The computer asks how its request is doing. Only the browser holding the
- * request's secret gets an answer about it; an approved request is handed out
- * once and then deleted. Returns { status: 'pending' | 'expired' | 'approved', ... }.
+ * The computer asks how its request is doing, with the code from the phone
+ * once it has one. Only the browser holding the request's secret gets an
+ * answer. Returns:
+ *   { status: 'pending' }                 the phone has not signed yet
+ *   { status: 'confirm', wrong?, left? }  signed; type the phone's code
+ *   { status: 'approved', purpose, userId, address }  once, then the request is gone
+ *   { status: 'expired' }                 gone, used, too many wrong codes, or not yours
+ *   { status: 'error', reason }           the link could not be made
+ * A link request is linked here, after the code — not when the phone signs.
  */
-export function claimQr(request) {
+export function claimQr(request, code = '') {
   const c = readQrCookie(request)
   if (!c) return { status: 'expired' }
   const all = qrAll()
   const r = all[c.id]
-  if (!r || r.exp <= Date.now()) return { status: 'expired' }
-  const a = Buffer.from(sha(c.secret)), b = Buffer.from(String(r.secret))
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { status: 'expired' }
+  if (!r || r.exp <= Date.now() || !sameHash(sha(c.secret), r.secret)) return { status: 'expired' }
   if (r.status !== 'approved') return { status: 'pending' }
+  const typed = String(code || '').replace(/\D/g, '')
+  if (!typed) return { status: 'confirm' }
+  if (!sameHash(sha(typed), r.confirm)) {
+    r.tries = (r.tries || 0) + 1
+    if (r.tries >= MAX_TRIES) { delete all[c.id]; qrSave(all); return { status: 'expired' } }
+    qrSave(all)
+    return { status: 'confirm', wrong: true, left: MAX_TRIES - r.tries }
+  }
   delete all[c.id]
   qrSave(all)
+  if (r.purpose === 'link') {
+    const l = linkWallet({ userId: r.userId, email: r.email, address: r.address })
+    if (!l.ok) return { status: 'error', reason: l.reason }
+  }
   return { status: 'approved', purpose: r.purpose, userId: r.userId, address: r.address }
 }
