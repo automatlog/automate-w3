@@ -8,7 +8,7 @@
      account opens a session — for that account. Invite-only stays true. */
   if (form.get('intent') === 'wallet') {
     const to = String(form.get('next') ?? '')
-    const v = verifyWalletMessage({ message: String(form.get('message') ?? ''), signature: String(form.get('signature') ?? ''), request, purpose: 'signin' })
+    const v = verifyWalletMessage({ message: String(form.get('message') ?? ''), signature: String(form.get('signature') ?? ''), request, purpose: 'signin', cookieNonce: readNonceCookie(request) })
     if (!v.ok) return { error: v.reason, wallet: true }
     const acct = accountOf(v.address)
     if (!acct) return { error: 'This wallet is not linked to an account yet. Sign in with your email, then link it under Settings → Sign in with MetaMask.', wallet: true }

@@ -28,6 +28,8 @@ process.chdir(fs.mkdtempSync(path.join(os.tmpdir(), 'wallet-auth-')))
 process.env.SUPABASE_URL = 'https://sb.test'
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-test'
 process.env.SUPABASE_ANON_KEY = 'anon-test'
+process.env.PUBLIC_URL = 'https://automateplatform.in'
+process.env.NODE_ENV = 'production'
 
 let passed = 0, failed = 0
 const ok = (cond, msg, extra = '') => { if (cond) passed++; else { failed++; console.error(`FAIL: ${msg}${extra ? `\n      ${String(extra).slice(0, 300)}` : ''}`) } }
@@ -62,32 +64,65 @@ const signed = async ({ wallet = w, purpose = 'signin', host = 'automateplatform
 
 /* ---- 1. good message, once ---- */
 const s1 = await signed()
-let v = W.verifyWalletMessage({ ...s1, request: req(), purpose: 'signin' })
+let v = W.verifyWalletMessage({ ...s1, request: req(), purpose: 'signin', cookieNonce: s1.nonce })
 ok(v.ok && v.address === w.address, 'a fresh signed message verifies, with the checksummed address', JSON.stringify(v))
-v = W.verifyWalletMessage({ ...s1, request: req(), purpose: 'signin' })
+v = W.verifyWalletMessage({ ...s1, request: req(), purpose: 'signin', cookieNonce: s1.nonce })
 ok(!v.ok && /already used/.test(v.reason), 'the same message again is refused (nonce spent)', v.reason)
-v = W.verifyWalletMessage({ ...(await signed({ nonce: 'deadbeefdeadbeefdeadbeef' })), request: req(), purpose: 'signin' })
+v = W.verifyWalletMessage({ ...(await signed({ nonce: 'deadbeefdeadbeefdeadbeef' })), request: req(), purpose: 'signin', cookieNonce: 'deadbeefdeadbeefdeadbeef' })
 ok(!v.ok && /already used|expired/.test(v.reason), 'a nonce we never issued is refused', v.reason)
 ok(W.parseSiwe(s1.message)?.statement === 'Sign in to Automate with this wallet.', 'the browser message parses back to its fields')
 
 /* ---- 2. refusals, and a failure does not spend the nonce ---- */
 const keep = await signed()
-v = W.verifyWalletMessage({ ...keep, request: req('evil.example'), purpose: 'signin' })
-ok(!v.ok && /another website/.test(v.reason), 'another website\'s request is refused', v.reason)
-v = W.verifyWalletMessage({ ...keep, request: req(), purpose: 'link' })
+/* Request headers no longer decide anything: a message for OUR domain verifies
+   whatever Host it arrives with, and (below) one for another domain never does. */
+const anyHost = await signed()
+v = W.verifyWalletMessage({ ...anyHost, request: req('evil.example'), purpose: 'signin', cookieNonce: anyHost.nonce })
+ok(v.ok, 'the Host header is not trusted either way: a message for our domain verifies on its own merits', JSON.stringify(v))
+v = W.verifyWalletMessage({ ...keep, request: req(), purpose: 'link', cookieNonce: keep.nonce })
 ok(!v.ok && /something else/.test(v.reason), 'a sign-in signature cannot be used to link (and vice versa)', v.reason)
-v = W.verifyWalletMessage({ message: keep.message, signature: await Wallet.createRandom().signMessage(keep.message), request: req(), purpose: 'signin' })
+v = W.verifyWalletMessage({ message: keep.message, signature: await Wallet.createRandom().signMessage(keep.message), request: req(), purpose: 'signin', cookieNonce: keep.nonce })
 ok(!v.ok && /not from that wallet/.test(v.reason), 'a signature from another wallet is refused', v.reason)
-v = W.verifyWalletMessage({ ...keep, request: req(), purpose: 'signin' })
+v = W.verifyWalletMessage({ ...keep, request: req(), purpose: 'signin', cookieNonce: keep.nonce })
 ok(v.ok, 'after those failures the good message still works (failures did not spend its nonce)', JSON.stringify(v))
-v = W.verifyWalletMessage({ ...(await signed({ now: new Date(Date.now() - 11 * 60_000) })), request: req(), purpose: 'signin' })
+const oldOne = await signed({ now: new Date(Date.now() - 11 * 60_000) })
+v = W.verifyWalletMessage({ ...oldOne, request: req(), purpose: 'signin', cookieNonce: oldOne.nonce })
 ok(!v.ok && /too old|expired/.test(v.reason), 'a message issued 11 minutes ago is refused', v.reason)
 const otherHost = await signed({ host: 'evil.example' })
-v = W.verifyWalletMessage({ ...otherHost, request: req(), purpose: 'signin' })
+v = W.verifyWalletMessage({ ...otherHost, request: req(), purpose: 'signin', cookieNonce: otherHost.nonce })
 ok(!v.ok && /another website/.test(v.reason), 'a message made for another domain is refused here', v.reason)
 v = W.verifyWalletMessage({ message: 'hello', signature: '0x00', request: req(), purpose: 'signin' })
 ok(!v.ok, 'garbage is refused without throwing')
 ok(getBytes(s1.signature).length === 65, 'the signature is a 65-byte personal_sign signature')
+
+/* The security review's attack (6 Nov): a phishing site gets a message signed for
+   ITS domain, then replays it to us with a forged X-Forwarded-Host. */
+const phish = await signed({ host: 'evil.example' })
+const forged = new Request('https://automateplatform.in/login', { method: 'POST', headers: { host: 'evil.example', 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' } })
+v = W.verifyWalletMessage({ ...phish, request: forged, purpose: 'signin', cookieNonce: phish.nonce })
+ok(!v.ok && /another website/.test(v.reason), 'a forged X-Forwarded-Host cannot make another domain message count (the origin is configuration)', v.reason)
+const bound = await signed()
+v = W.verifyWalletMessage({ ...bound, request: req(), purpose: 'signin', cookieNonce: '' })
+ok(!v.ok && /another browser/.test(v.reason), 'no nonce cookie: refused (a nonce harvested elsewhere cannot be used)', v.reason)
+v = W.verifyWalletMessage({ ...bound, request: req(), purpose: 'signin', cookieNonce: 'aaaaaaaaaaaaaaaaaaaaaaaa' })
+ok(!v.ok && /another browser/.test(v.reason), 'a nonce cookie from a different browser: refused', v.reason)
+v = W.verifyWalletMessage({ ...bound, request: req(), purpose: 'signin', cookieNonce: bound.nonce })
+ok(v.ok, '…and those refusals did not spend the nonce of this browser', JSON.stringify(v))
+ok(W.readNonceCookie(new Request('https://x/', { headers: { cookie: `a=1; ${W.NONCE_COOKIE}=${bound.nonce}; b=2` } })) === bound.nonce, 'the nonce cookie is read back from the Cookie header')
+const ck = W.nonceCookie(bound.nonce, req())
+ok(/HttpOnly/.test(ck) && /SameSite=Lax/.test(ck) && /Secure/.test(ck) && /Max-Age=600/.test(ck), 'the cookie is HttpOnly, SameSite=Lax, Secure on https, 10 minutes', ck)
+process.env.NODE_ENV = 'development'
+const local = await signed({ host: 'localhost:5173' })
+const localMsg = { ...local, message: local.message.replace('URI: https://localhost:5173', 'URI: http://localhost:5173') }
+localMsg.signature = await w.signMessage(localMsg.message)
+v = W.verifyWalletMessage({ ...localMsg, request: req(), purpose: 'signin', cookieNonce: local.nonce })
+ok(!v.ok && /another website/.test(v.reason), 'with a real site configured, a "localhost" message is refused even outside production', v.reason)
+process.env.NODE_ENV = 'production'
+const savedPub = process.env.PUBLIC_URL; delete process.env.PUBLIC_URL
+const unset = await signed()
+v = W.verifyWalletMessage({ ...unset, request: req(), purpose: 'signin', cookieNonce: unset.nonce })
+ok(!v.ok && /not set up/.test(v.reason), 'no configured origin in production: wallet sign-in is off', v.reason)
+process.env.PUBLIC_URL = savedPub
 
 /* ---- 3. links ---- */
 ok(W.linkWallet({ userId: '11111111-1111-4111-8111-111111111111', email: 'owner@shop.test', address: w.address.toLowerCase() }).ok, 'link a wallet to an account')

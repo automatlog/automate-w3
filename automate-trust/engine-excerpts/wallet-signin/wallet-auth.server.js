@@ -74,18 +74,54 @@ export function parseSiwe(message) {
   }
 }
 
+/*
+ * WHICH WEBSITE a message may name is SERVER CONFIGURATION, never a request
+ * header (security review, 6 Nov). Taken from X-Forwarded-Host, a phishing site
+ * could have a victim sign "evil.example wants you to sign in…" — MetaMask sees
+ * no mismatch on evil.example — and replay it to us with a forged header. So the
+ * allowed origins are WALLET_AUTH_ORIGINS, else PUBLIC_URL / SITE_URL /
+ * TRUST_BASE_URL; local dev also allows localhost. None set: wallet sign-in is off.
+ */
+export function allowedOrigins() {
+  const list = String(process.env.WALLET_AUTH_ORIGINS || [process.env.PUBLIC_URL, process.env.SITE_URL, process.env.TRUST_BASE_URL].filter(Boolean).join(','))
+    .split(',').map((s) => { try { return new URL(s.trim()).origin } catch { return '' } }).filter(Boolean)
+  /* localhost only for a dev box with NO site configured — never beside a real
+     domain, where it would let a phishing page claim "localhost" (6 Nov). */
+  if (!list.length && process.env.NODE_ENV !== 'production') list.push('http://localhost:5173', 'http://localhost:3000')
+  return [...new Set(list)]
+}
+
+/*
+ * The nonce is also bound to the BROWSER it was issued to: the page that issues
+ * it sets it in an httpOnly cookie, and the message must carry that same nonce.
+ * A nonce harvested in one browser (an attacker's) cannot complete a sign-in
+ * from another, and page script cannot read or set the cookie.
+ */
+export const NONCE_COOKIE = 'automate_siwe'
+export function nonceCookie(nonce, request) {
+  const secure = new URL(request.url).protocol === 'https:' || String(request.headers.get('x-forwarded-proto') || '').startsWith('https')
+  return `${NONCE_COOKIE}=${nonce}; Path=/; Max-Age=${NONCE_TTL_MS / 1000}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`
+}
+export function readNonceCookie(request) {
+  const m = String(request.headers.get('cookie') || '').match(new RegExp(`(?:^|;\\s*)${NONCE_COOKIE}=([0-9a-f]{24})(?:;|$)`))
+  return m ? m[1] : ''
+}
+
 /**
  * Check a signed message for `purpose` ('signin' | 'link') from this request.
- * Returns { ok: true, address } or { ok: false, reason } — never throws.
+ * `cookieNonce` is readNonceCookie(request). Returns { ok: true, address } or
+ * { ok: false, reason } — never throws.
  */
-export function verifyWalletMessage({ message, signature, request, purpose }) {
+export function verifyWalletMessage({ message, signature, request, purpose, cookieNonce }) {
   const m = parseSiwe(message)
   if (!m) return { ok: false, reason: 'That was not a sign-in message.' }
-  const url = new URL(request.url)
-  const host = String(request.headers.get('x-forwarded-host') || request.headers.get('host') || url.host).split(',')[0].trim()
-  const proto = String(request.headers.get('x-forwarded-proto') || url.protocol.replace(':', '')).split(',')[0].trim()
-  if (m.domain !== host) return { ok: false, reason: 'The message was made for another website.' }
-  if (m.uri !== `${proto}://${host}` && !m.uri.startsWith(`${proto}://${host}/`)) return { ok: false, reason: 'The message was made for another website.' }
+  void request
+  const origins = allowedOrigins()
+  if (!origins.length) return { ok: false, reason: 'Wallet sign-in is not set up on this server.' }
+  const origin = origins.find((o) => new URL(o).host === m.domain)
+  if (!origin) return { ok: false, reason: 'The message was made for another website.' }
+  if (m.uri !== origin && !m.uri.startsWith(`${origin}/`)) return { ok: false, reason: 'The message was made for another website.' }
+  if (!cookieNonce || m.nonce !== cookieNonce) return { ok: false, reason: 'This sign-in request belongs to another browser or page. Reload and try again.' }
   if (m.version !== '1') return { ok: false, reason: 'Unsupported sign-in message.' }
   if (m.statement !== STATEMENTS[purpose]) return { ok: false, reason: 'The message was for something else.' }
   const issued = Date.parse(m.issuedAt)

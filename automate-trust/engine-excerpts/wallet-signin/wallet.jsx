@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Form, Link, data, useActionData, useLoaderData, useNavigation, useSubmit } from 'react-router'
 import { requireUser } from '../lib/supabase.server'
-import { issueNonce, verifyWalletMessage, linkWallet, unlinkWallet, walletOf } from '../lib/wallet-auth.server'
+import { issueNonce, nonceCookie, readNonceCookie, verifyWalletMessage, linkWallet, unlinkWallet, walletOf } from '../lib/wallet-auth.server'
 import { signWithMetaMask } from '../lib/wallet-client'
 import styles from './login.module.css'
 
@@ -19,7 +19,9 @@ export function meta() {
 
 export async function loader({ request }) {
   const { user, headers } = await requireUser(request)
-  return data({ nonce: issueNonce(), wallet: walletOf(user.id) }, { headers })
+  const nonce = issueNonce()
+  headers.append('Set-Cookie', nonceCookie(nonce, request))
+  return data({ nonce, wallet: walletOf(user.id) }, { headers })
 }
 
 export async function action({ request }) {
@@ -31,7 +33,7 @@ export async function action({ request }) {
     return data({ ok: 'MetaMask is no longer linked. Sign in with your email.' }, { headers })
   }
   if (intent === 'link') {
-    const v = verifyWalletMessage({ message: String(form.get('message') ?? ''), signature: String(form.get('signature') ?? ''), request, purpose: 'link' })
+    const v = verifyWalletMessage({ message: String(form.get('message') ?? ''), signature: String(form.get('signature') ?? ''), request, purpose: 'link', cookieNonce: readNonceCookie(request) })
     if (!v.ok) return data({ error: v.reason }, { headers })
     const r = linkWallet({ userId: user.id, email: user.email, address: v.address })
     return data(r.ok ? { ok: 'Linked. You can now sign in with MetaMask.' } : { error: r.reason }, { headers })
