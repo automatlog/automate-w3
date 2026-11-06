@@ -7,7 +7,7 @@ import os
 
 DEFAULT_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
-DEFAULT_EMBEDDING_DIM = 768  # model default is 3072; 768 is a recommended smaller size
+DEFAULT_EMBEDDING_DIM = 3072  # gemini-embedding-001 default; lower it only if the endpoint honours `dimensions`
 DEFAULT_LLM_BASE_URL = "https://router-api.0g.ai/v1"
 DEFAULT_LLM_MODEL = "glm-5.2"
 DEFAULT_DATABASE_URL = "postgresql+psycopg://knowledge:knowledge@localhost:5433/knowledge"
