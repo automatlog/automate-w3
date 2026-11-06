@@ -193,19 +193,19 @@ section(3, 'approver binding')
 /* ---- 4 ---- */
 section(4, 'verifyHuman')
 {
-  const hp = mkPending({ kind: 'human', data: { title: 'One refund', action: 'refund' } })
+  const hp = mkPending({ kind: 'human', data: { title: 'One refund', action: 'refund', rpNonces: ['0x1'] } })
   const proof = (nul, over = {}) => ({ protocol_version: '4.0', nonce: '0x1', action: 'refund', environment: 'staging', responses: [{ identifier: 'proof_of_human', proof: ['1', '2', '3', '4', '5'], nullifier: nul, issuer_schema_id: 1, expires_at_min: 1 }], ...over })
   verifyAnswer = { success: true }
   let n = calls.length
   let r = await W.verifyHuman(hp, proof('12345'), { action: 'refund' })
   ok(r.ok === true && r.nullifier === '12345', 'success returns the nullifier')
   const vc = calls.slice(n).find((c) => c.url.includes('/api/v4/verify/'))
-  ok(vc && vc.method === 'POST' && JSON.parse(vc.body).responses[0].nullifier === '12345', 'result forwarded to World unchanged')
+  ok(vc && vc.method === 'POST' && JSON.parse(vc.body).responses[0].nullifier === '12345' && JSON.parse(vc.body).action === 'refund', 'result forwarded to World, with the server action pinned')
   const book = fs.readFileSync(path.join(tmp, 'data', 'world-nullifiers.json'), 'utf8')
   ok(book.includes('12345') && !book.includes('"proof"'), 'nullifier stored, raw proof not')
 
   n = calls.length
-  r = await W.verifyHuman(mkPending({ kind: 'human' }), proof('12345'), { action: 'refund' })
+  r = await W.verifyHuman(mkPending({ kind: 'human', data: { rpNonces: ['0x1'] } }), proof('12345'), { action: 'refund' })
   ok(r.ok === false && r.already === true && calls.length === n, 'same nullifier again -> already, no network')
   r = await W.verifyHuman(hp, proof('12345'), { action: 'other-action' })
   ok(r.ok === false && !r.already, 'a proof made for another action is refused')
@@ -226,6 +226,24 @@ section(4, 'verifyHuman')
   ok(r.ok === false && /expired/.test(r.reason), 'expired pending refused')
   r = await W.verifyHuman(hp, { environment: 'staging', responses: [] }, { action: 'refund' })
   ok(r.ok === false, 'proof without a nullifier refused')
+
+  /* Bound to this request (6 Nov security review): nonce, action, signal. */
+  n = calls.length
+  r = await W.verifyHuman(hp, proof('4242', { nonce: '0x2' }), { action: 'refund' })
+  ok(r.ok === false && /not made for this request/.test(r.reason) && calls.length === n, 'a nonce this server did not issue for this link is refused, no network')
+  r = await W.verifyHuman(mkPending({ kind: 'human' }), proof('4243'), { action: 'refund' })
+  ok(r.ok === false && calls.length === n, 'a link that never issued a request accepts no proof')
+  const noAction = proof('4244'); delete noAction.action
+  n = calls.length
+  r = await W.verifyHuman(hp, noAction, { action: 'refund' })
+  const pinned = calls.slice(n).find((c) => c.url.includes('/api/v4/verify/'))
+  ok(r.ok === true && pinned && JSON.parse(pinned.body).action === 'refund', 'a proof with no action is verified by World against OUR action (not skipped)')
+  const { hashSignal } = await import('@worldcoin/idkit-core/hashing')
+  const withSig = (nul, sig) => proof(nul, { responses: [{ identifier: 'proof_of_human', proof: ['1'], nullifier: nul, signal_hash: sig }] })
+  r = await W.verifyHuman(hp, withSig('4245', hashSignal('some-other-link')), { action: 'refund' })
+  ok(r.ok === false && /different link/.test(r.reason), 'a signal hash for another link is refused')
+  r = await W.verifyHuman(hp, withSig('4246', hashSignal(hp.id)), { action: 'refund' })
+  ok(r.ok === true, 'the signal hash of this link passes')
 }
 
 /* ---- 5 ---- */

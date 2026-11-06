@@ -93,7 +93,14 @@ export async function handleTrustRoute({ req, res, url, readBody, push = () => {
     const closed = row.status !== 'pending'
     if (action === 'rp') {
       if (closed) return json(409, { ok: false, reason: `This request is already ${row.status}.` })
-      try { return json(200, { rp_context: await W.humanRpContext(action_) }) } catch (e) { return json(503, { ok: false, reason: e.message }) }
+      try {
+        const rp = await W.humanRpContext(action_)
+        /* The nonce is kept on the row: verifyHuman accepts only a proof made
+           for a request this server signed for THIS link (the last few, as a
+           page can be reloaded). */
+        P.patchPending(row.id, { rpNonces: [...(row.data?.rpNonces || []).slice(-4), String(rp.nonce)] })
+        return json(200, { rp_context: rp })
+      } catch (e) { return json(503, { ok: false, reason: e.message }) }
     }
     if (action === 'verify') {
       if (req.method !== 'POST') return json(405, { error: 'method not allowed' })

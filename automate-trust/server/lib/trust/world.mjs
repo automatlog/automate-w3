@@ -231,7 +231,21 @@ export async function verifyHuman(pending, result, { action } = {}) {
     if (Date.now() > Number(pending?.expiresAt)) return fail('this request has expired')
     // Before any network call: a proof made in the simulator must not pass as a real one.
     if (result.environment !== cfg.env) return fail(`the proof was made for ${result.environment || 'an unknown'} World ID, but this server expects ${cfg.env}`)
-    if (result.action && result.action !== action) return fail('the proof was made for a different action')
+    /* Bound to THIS request (6 Nov, security review). A proof made for any
+       other action carries a different nullifier, so if a missing action were
+       let through, one person could claim "refund" again and again with
+       made-up actions. So: the nonce must be one this server issued for this
+       link (humanRpContext → routes.mjs saves it on the row), the action must
+       match when the proof states it, and World is asked to verify against
+       OUR action (below), which fails a proof made for any other. Where World
+       includes a signal hash, it must be this link's id (the page's signal). */
+    const issued = Array.isArray(pending?.data?.rpNonces) ? pending.data.rpNonces.map(String) : []
+    if (!issued.includes(String(result.nonce ?? ''))) return fail('the proof was not made for this request')
+    if (result.action != null && String(result.action) !== String(action)) return fail('the proof was made for a different action')
+    const { hashSignal } = await import('@worldcoin/idkit-core/hashing')
+    const sameNum = (a, b) => { try { return BigInt(a) === BigInt(b) } catch { return String(a).toLowerCase() === String(b).toLowerCase() } }
+    const want = hashSignal(String(pending?.id || ''))
+    if ((Array.isArray(result.responses) ? result.responses : []).some((x) => x?.signal_hash && !sameNum(x.signal_hash, want))) return fail('the proof was made for a different link')
     const ns = nullifiersOf(result)
     if (!ns.length) return fail('the proof has no nullifier')
 
@@ -241,7 +255,7 @@ export async function verifyHuman(pending, result, { action } = {}) {
     const r = await netFetch(`${verifyBase()}/api/v4/verify/${encodeURIComponent(cfg.rpId)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(result), // forwarded unchanged, as World requires
+      body: JSON.stringify({ ...result, action: String(action) }), // as sent, with the action pinned to the server's
     })
     const j = await r.json().catch(() => ({}))
     if (!r.ok || j.success !== true) return fail(j.detail || j.message || 'World could not confirm the proof')

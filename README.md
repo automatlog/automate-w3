@@ -138,7 +138,7 @@ Details: [`knowledge/README.md`](knowledge/README.md).
 ```bash
 cd automate-trust
 npm install
-npm test        # World ID: 64 checks · Arc USDC: 81 checks
+npm test        # World ID: 69 checks · Arc USDC: 81 checks
 ```
 
 **Knowledge service (Python 3.12).**
@@ -165,7 +165,7 @@ uvicorn knowledge.app:app --port 8000
 
 | Suite | Checks | What it covers |
 |---|---|---|
-| `automate-trust/scripts/test-trust-world.mjs` | 64 | PKCE, nonce, state, id_token signature and claims, stale `auth_time`, approver binding, IDKit verify, duplicate nullifiers, the environment check, HTML escaping, no secret in any output |
+| `automate-trust/scripts/test-trust-world.mjs` | 69 | PKCE, nonce, state, id_token signature and claims, stale `auth_time`, approver binding, IDKit verify bound to this request (nonce, action, signal), duplicate nullifiers, the environment check, HTML escaping, no secret in any output |
 | `automate-trust/scripts/test-trust-arc.mjs` | 81 | exact unit maths, unique amounts, log matching (wrong amount, wrong recipient, replayed tx), block windows, send limits, the decoded raw transaction |
 | `engine-excerpts/test-trust-flow.mjs` | 42 | the whole demo flow through Automate's real engine: paid, verified, approved, a real signed refund, the second refund refused, denied / expired / half-wired, forged callbacks, the 0G record's privacy, seal and verify, and the AI step on the 0G Router. It runs inside Automate's repo |
 | `tests/` (pytest) | 31 | chunking, PII, RRF, retrieval, embeddings batching, the 0G request id, the API routes, auth |
