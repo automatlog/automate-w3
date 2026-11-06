@@ -20,6 +20,9 @@
  *   POST /webhook/trust/human/:id/cancel
  *   GET  /webhook/trust/pay/:id                the USDC payment page
  *   GET  /webhook/trust/pay/:id/status         polled by that page
+ *   GET  /webhook/trust/verify[/:root]         the public "verify a run" page:
+ *                                              a 0G root hash in, the sealed
+ *                                              record and its checks out
  */
 import crypto from 'node:crypto'
 
@@ -28,13 +31,29 @@ export const trustBase = () => String(process.env.TRUST_BASE_URL || process.env.
 const short = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 16)
 
 /** Handles a /webhook/trust/... request; returns false for any other path. */
-export async function handleTrustRoute({ req, res, url, readBody, push = () => {} }) {
+export async function handleTrustRoute({ req, res, url, readBody, push = () => {}, findRun = null }) {
   const m = url.pathname.match(/^\/webhook\/trust\/(approve|human|pay)\/([0-9a-f]{24}|callback)(?:\/(start|deny|rp|verify|cancel|status))?$/)
-  if (!m) return false
-  const [, kind, idOrCb, action = ''] = m
+  const vm = url.pathname.match(/^\/webhook\/trust\/verify(?:\/([^/]+))?\/?$/)
+  if (!m && !vm) return false
   const html = (code, body) => { res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', ...HEAD }); res.end(body); return true }
   const json = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json', ...HEAD }); res.end(JSON.stringify(body)); return true }
   const redirect = (to) => { res.writeHead(302, { Location: to, ...HEAD }); res.end(); return true }
+
+  /* The public "verify a run" page (6 Nov 2026). Read-only: GET, and nothing
+     it does writes anything. ?root= (the form) redirects to the path form, so
+     a checked run has one shareable address. */
+  if (vm) {
+    if (req.method !== 'GET') return json(405, { error: 'method not allowed' })
+    const asked = decodeURIComponent(vm[1] || '').trim()
+    const q = String(url.searchParams.get('root') || '').trim()
+    if (!asked && q) return redirect(`/webhook/trust/verify/${encodeURIComponent(q)}`)
+    if (!asked) return html(200, verifyPageHtml({}))
+    const Z = await import('./zg.mjs')
+    const result = await Z.verifyRoot(asked, { findRun })
+    return html(result.root ? 200 : 400, verifyPageHtml({ asked, result }))
+  }
+
+  const [, kind, idOrCb, action = ''] = m
   const P = await import('./pending.mjs')
   const base = trustBase()
 
@@ -135,4 +154,73 @@ export async function handleTrustRoute({ req, res, url, readBody, push = () => {
   if (action === 'status') return json(200, { status: row.status, txHash: txHash || null, explorerUrl: txHash ? A.explorerTx(txHash) : null })
   if (action) return json(404, { error: 'not found' })
   return html(200, A.payPageHtml({ pending: row, statusUrl: `${base}/webhook/trust/pay/${row.id}/status`, state: row.status === 'pending' ? 'open' : row.status === 'paid' ? 'paid' : 'expired', txHash }))
+}
+
+/* ── the public "verify a run" page ─────────────────────────────────────────
+   Everything shown comes from the record on 0G, which is public already: step
+   titles, outcomes and transaction hashes — never a phone number or message
+   text (proofRecord keeps them out). Every value is escaped. No platform name:
+   the businesses using this are white-label. */
+const escH = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+const ARC_TX = 'https://explorer.testnet.arc.io/tx/'
+const STEP_NAMES = {
+  world_approval: 'Human approval · World ID', world_human: 'Verify human · World ID',
+  usdc_collect: 'Collect USDC · Arc', usdc_send: 'Send USDC · Arc', aistep: 'AI step · 0G Compute Router', proof0g: 'Proof on 0G',
+}
+const isHash = (s) => /^0x[0-9a-fA-F]{64}$/.test(String(s || ''))
+const clipMid = (s, n = 10) => { const t = String(s || ''); return t.length > n * 2 + 1 ? `${t.slice(0, n)}…${t.slice(-6)}` : t }
+
+export function verifyPageHtml({ asked = '', result = null } = {}) {
+  const r = result || {}
+  const rec = r.record || null
+  const tag = !result ? '' : r.ok === true ? '<p class="tag ok">Matches</p>' : r.ok === null ? '<p class="tag">Found on 0G</p>' : '<p class="tag bad">Does not match</p>'
+  const check = (label, v) => (v ? `<div class="row"><span class="k">${escH(label)}</span><code>${escH(v)}</code>${r.checks?.downloaded && v === r.checks.downloaded ? '<span class="yes">✓</span>' : '<span class="no">✗</span>'}</div>` : '')
+  const trustRows = (rec?.trust || []).map((t) => {
+    const tx = isHash(t.tx) ? `<a class="link" href="${escH(ARC_TX + t.tx)}" rel="noopener">${escH(clipMid(t.tx))}</a>` : ''
+    const more = [t.amount && escH(t.amount), tx, t.requestId && `0G request ${escH(clipMid(t.requestId, 8))}`, t.model && escH(t.model), t.approver && `approver ${escH(clipMid(t.approver, 6))}`, t.action && `action “${escH(t.action)}”`].filter(Boolean).join(' · ')
+    return `<tr><td>${escH(STEP_NAMES[t.step] || t.step || '')}</td><td><b>${escH(t.outcome || '')}</b></td><td>${more}</td></tr>`
+  }).join('')
+  const pathRows = (rec?.path || []).map((p) => `<li>${escH(p.title || p.type)} <span class="dim">${escH(STEP_NAMES[p.type] ? STEP_NAMES[p.type] : p.type)}</span></li>`).join('')
+  const body = !result
+    ? `<h1>Verify a run</h1><p class="note">Paste the root hash shown on a run's Proof on 0G. The record is downloaded from 0G Storage with its Merkle proof and checked.</p>`
+    : !r.root
+      ? `<h1>Verify a run</h1><p class="note">${escH(r.reason)}</p>`
+      : `${tag}<h1>Run record on 0G</h1><p class="note">${escH(r.reason)}</p>
+        <div class="box"><span class="k">Root hash</span><code>${escH(r.root)}</code>
+          ${r.explorer ? `<p><a class="link" href="${escH(r.explorer)}" rel="noopener">The upload transaction on 0G</a></p>` : ''}</div>
+        ${r.checks?.downloaded ? `<div class="box"><span class="k">sha256 of the record</span>
+          ${check('Downloaded from 0G', r.checks.downloaded)}${check('Stored when sealed', r.checks.stored)}${check('Rebuilt from the run now', r.checks.rebuilt)}</div>` : ''}
+        ${rec ? `<div class="box"><span class="k">The run</span>
+          <p>${escH(rec.run || '')} · ${escH(rec.status || '')} · ${escH(String(rec.at || '').replace('T', ' ').slice(0, 19))} UTC · ${escH(rec.channel || rec.trigger || '')}</p>
+          ${pathRows ? `<ol class="path">${pathRows}</ol>` : ''}</div>
+        ${trustRows ? `<div class="box"><span class="k">Approvals, payments and proofs</span><table>${trustRows}</table></div>` : ''}` : ''}`
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Verify a run on 0G</title>
+<style>
+:root{--bg:#0B0D0C;--ink:#D1D1D1;--dim:#8A8F8C;--line:#242826;--panel:#141715;--accent:#3DDC84;--bad:#FF6A5C}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:32px 16px}
+h1{font-size:24px;font-weight:600;margin:0 0 8px}
+.note{color:var(--dim);font-size:15px;margin:8px 0 16px}
+.tag{display:inline-block;margin:0 0 12px;padding:4px 12px;border-radius:8px;border:1px solid var(--line);font-weight:700}
+.tag.ok{background:var(--accent);color:#0B0D0C;border-color:var(--accent)}
+.tag.bad{border-color:var(--bad);color:var(--bad)}
+.box{margin:16px 0;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.k{display:block;color:var(--dim);font-size:13px;margin-bottom:6px}
+code{font:13px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}
+.row{display:grid;grid-template-columns:1fr;gap:2px;margin:8px 0}
+.row .k{margin:0}.yes{color:var(--accent);font-weight:700}.no{color:var(--bad);font-weight:700}
+.path{margin:8px 0 0;padding-left:20px}.dim{color:var(--dim);font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:14px}td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.link{color:var(--ink);text-decoration:underline;overflow-wrap:anywhere}
+form{display:flex;gap:8px;margin:24px 0 0;flex-wrap:wrap}
+input{flex:1;min-width:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font:13px ui-monospace,Consolas,monospace}
+button{padding:12px 16px;border:0;border-radius:10px;background:var(--accent);color:#0B0D0C;font:inherit;font-weight:700;cursor:pointer}
+footer{margin-top:32px;color:var(--dim);font-size:13px}
+</style></head>
+<body><main>${body}
+<form method="get" action="/webhook/trust/verify"><input name="root" placeholder="0x… root hash" value="${escH(asked)}" aria-label="0G root hash" autocomplete="off" spellcheck="false"><button type="submit">Check</button></form>
+<footer>Records are stored on 0G Storage and checked live, with the Merkle proof.</footer></main></body></html>`
 }

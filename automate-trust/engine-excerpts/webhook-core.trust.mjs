@@ -36,7 +36,7 @@
        approver and the customer have no account. trust/routes.mjs. */
     if (url.pathname.startsWith('/webhook/trust/')) {
       const { handleTrustRoute } = await import('./lib/trust/routes.mjs')
-      if (await handleTrustRoute({ req, res, url, readBody, push })) return true
+      if (await handleTrustRoute({ req, res, url, readBody, push, findRun: (root) => executions.find((x) => String(x.proof?.root || '').toLowerCase() === root) })) return true
     }
 
 

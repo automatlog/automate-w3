@@ -158,3 +158,49 @@ export async function verifyRun(exec, { sdk } = {}) {
     reason: ok ? 'the record on 0G matches this run' : downloaded !== p.digest ? 'the file on 0G differs from what was sealed' : 'this run has changed since it was sealed',
   }
 }
+
+/* The public check (6 Nov 2026, ETHGlobal): a root hash is all anyone needs —
+   the judges cannot sign in, and a customer should not have to. It shows only
+   what 0G already holds publicly; when this server still has the run, all
+   three digests are compared as in verifyRun. A result is kept 10 minutes per
+   root, so a busy page does not hammer the 0G indexer; a failed download is
+   never kept. `findRun(root)` and `sdk` are injected (webhook-core, tests). */
+const ROOT_RE = /^0x[0-9a-f]{64}$/
+const ROOT_CACHE_MS = 10 * 60_000
+const ROOT_CACHE_MAX = 200
+const rootCache = new Map() // root → { at, out }
+
+export async function verifyRoot(root, { findRun, sdk, cache = true } = {}) {
+  const r = String(root || '').trim().toLowerCase()
+  if (!ROOT_RE.test(r)) return { ok: false, root: null, reason: 'that is not a 0G root hash (0x and 64 hex characters)' }
+  const hit = cache && rootCache.get(r)
+  if (hit && Date.now() - hit.at < ROOT_CACHE_MS) return hit.out
+  let text
+  try {
+    const { Indexer } = sdk || await import('@0gfoundation/0g-storage-ts-sdk')
+    const [blob, err] = await withTimeout(new Indexer(zgConfig().indexerUrl).downloadToBlob(r, { proof: true }), DOWNLOAD_TIMEOUT_MS, 'the 0G download')
+    if (err) throw new Error(err.message || String(err))
+    text = Buffer.from(await blob.arrayBuffer()).toString('utf8')
+  } catch (e) {
+    return { ok: false, root: r, reason: `could not download this record from 0G: ${String(e.message || e).slice(0, 200)}` }
+  }
+  let record = null
+  try { const j = JSON.parse(text); if (j && j.kind === 'automate.run') record = j } catch { /* not JSON: not a run record */ }
+  const run = (findRun && findRun(r)) || null
+  const downloaded = sha256(text)
+  const stored = run?.proof?.digest || null
+  const rebuilt = run ? sha256(canonical(proofRecord(run))) : null
+  const ok = !record ? false : run ? downloaded === stored && rebuilt === stored : null
+  const out = {
+    ok, root: r, record, tx: run?.proof?.tx || null, explorer: run?.proof?.explorer || null,
+    checks: { downloaded, stored, rebuilt },
+    reason: !record ? 'the file at this root is not a run record'
+      : ok === null ? 'downloaded from 0G with its Merkle proof; this server no longer has the run to compare it with'
+        : ok ? 'the record on 0G matches the run' : downloaded !== stored ? 'the file on 0G differs from what was sealed' : 'the run has changed since it was sealed',
+  }
+  if (cache) {
+    if (rootCache.size >= ROOT_CACHE_MAX) rootCache.delete(rootCache.keys().next().value)
+    rootCache.set(r, { at: Date.now(), out })
+  }
+  return out
+}
