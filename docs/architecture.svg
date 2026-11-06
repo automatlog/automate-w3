@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" role="img" aria-labelledby="t d">
+  <title id="t">Automate Trust Layer — architecture</title>
+  <desc id="d">Customers and an approver talk to Automate over WhatsApp. Automate's flow has six trust steps (AI step on 0G, Collect USDC, Verify human, Human approval, Send USDC, Proof on 0G) built on a pending store, public link pages and watchers. They call World ID (Agent Pass and IDKit), Arc testnet USDC, 0G Storage and the 0G Compute Router, and a Python knowledge service.</desc>
+  <defs>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="12" cy="12" r="1" fill="#D1D1D1" fill-opacity="0.07"/>
+    </pattern>
+    <style>
+      .sans { font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+      .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace; }
+      .h1 { font-size: 28px; font-weight: 600; fill: #D1D1D1; }
+      .lede { font-size: 14px; fill: #8A918A; }
+      .cap { font-size: 10.5px; letter-spacing: 1.4px; fill: #626B62; }
+      .nt { font-size: 14px; font-weight: 600; fill: #D1D1D1; }
+      .ns { font-size: 11.5px; fill: #8A918A; }
+      .nm { font-size: 10.5px; fill: #8A918A; }
+      .ft { font-size: 13px; font-weight: 600; fill: #D1D1D1; }
+      .fs { font-size: 10.5px; fill: #8A918A; }
+      .wl { font-size: 10px; fill: #626B62; }
+      .card { fill: #0F160F; stroke: rgba(209,209,209,0.18); stroke-width: 1; }
+      .soft { fill: #0A100A; stroke: rgba(209,209,209,0.10); stroke-width: 1; }
+      .node { fill: #141D14; stroke: rgba(209,209,209,0.18); stroke-width: 1; }
+      .wire { fill: none; stroke: #3D943D; stroke-width: 1.5; stroke-opacity: 0.9; }
+      .wire2 { fill: none; stroke: #3D943D; stroke-width: 1.2; stroke-opacity: 0.55; stroke-dasharray: 4 4; }
+      .port { fill: #3D943D; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="800" fill="#070B07"/>
+  <rect width="1280" height="800" fill="url(#dots)"/>
+
+  <!-- title -->
+  <text x="48" y="62" class="sans h1">Automate Trust Layer</text>
+  <text x="48" y="88" class="sans lede">Human-approved, paid and provable AI workflows on WhatsApp — ETHGlobal Mumbai 2026, Continuity Track</text>
+
+  <!-- people -->
+  <text x="48" y="150" class="mono cap">PEOPLE</text>
+  <rect x="48" y="166" width="200" height="100" rx="12" class="card"/>
+  <text x="66" y="196" class="sans nt">Customer</text>
+  <text x="66" y="218" class="sans ns">on WhatsApp</text>
+  <text x="66" y="240" class="sans ns">orders · pays · asks</text>
+  <text x="66" y="256" class="sans ns">for a refund</text>
+
+  <rect x="48" y="466" width="200" height="100" rx="12" class="card"/>
+  <text x="66" y="496" class="sans nt">Approver (owner)</text>
+  <text x="66" y="518" class="sans ns">WhatsApp + World App</text>
+  <text x="66" y="540" class="sans ns">approves a payout with</text>
+  <text x="66" y="556" class="sans ns">a fresh World ID sign-in</text>
+
+  <!-- people → Automate -->
+  <path d="M248 216 C 274 216, 274 238, 300 238" class="wire"/>
+  <rect x="245" y="213" width="6" height="6" rx="1.5" class="port"/>
+  <rect x="297" y="235" width="6" height="6" rx="1.5" class="port"/>
+  <path d="M248 516 C 274 516, 274 384, 300 384" class="wire"/>
+  <rect x="245" y="513" width="6" height="6" rx="1.5" class="port"/>
+  <rect x="297" y="381" width="6" height="6" rx="1.5" class="port"/>
+
+  <!-- Automate panel -->
+  <rect x="300" y="128" width="620" height="610" rx="18" class="soft"/>
+  <text x="324" y="156" class="mono cap">AUTOMATE — LIVE AT AUTOMATEPLATFORM.IN</text>
+
+  <text x="324" y="190" class="mono cap">FLOW · SIX NEW STEPS ON THE BUILDER'S CANVAS</text>
+  <!-- flow nodes: w82, step 98 -->
+  <rect x="324" y="204" width="82" height="66" rx="10" class="node"/>
+  <text x="336" y="230" class="sans nt">AI step</text>
+  <text x="336" y="250" class="sans nm">0G Router</text>
+
+  <rect x="422" y="204" width="82" height="66" rx="10" class="node"/>
+  <text x="434" y="230" class="sans nt">Collect</text>
+  <text x="434" y="250" class="sans nm">USDC · Arc</text>
+
+  <rect x="520" y="204" width="82" height="66" rx="10" class="node"/>
+  <text x="532" y="230" class="sans nt">Verify</text>
+  <text x="532" y="250" class="sans nm">human · IDKit</text>
+
+  <rect x="618" y="204" width="82" height="66" rx="10" fill="#141D14" stroke="#79F181" stroke-width="1.5"/>
+  <text x="630" y="230" class="sans nt">Human</text>
+  <text x="630" y="250" class="sans nm">approval</text>
+  <text x="630" y="263" class="sans nm" fill="#79F181">Agent Pass</text>
+
+  <rect x="716" y="204" width="82" height="66" rx="10" class="node"/>
+  <text x="728" y="230" class="sans nt">Send</text>
+  <text x="728" y="250" class="sans nm">USDC · Arc</text>
+
+  <rect x="814" y="204" width="82" height="66" rx="10" class="node"/>
+  <text x="826" y="230" class="sans nt">Proof</text>
+  <text x="826" y="250" class="sans nm">on 0G</text>
+
+  <g class="wire">
+    <path d="M406 237 H422"/><path d="M504 237 H520"/><path d="M602 237 H618"/><path d="M700 237 H716"/><path d="M798 237 H814"/>
+  </g>
+  <g class="port">
+    <rect x="403" y="234" width="6" height="6" rx="1.5"/><rect x="419" y="234" width="6" height="6" rx="1.5"/>
+    <rect x="501" y="234" width="6" height="6" rx="1.5"/><rect x="517" y="234" width="6" height="6" rx="1.5"/>
+    <rect x="599" y="234" width="6" height="6" rx="1.5"/><rect x="615" y="234" width="6" height="6" rx="1.5"/>
+    <rect x="697" y="234" width="6" height="6" rx="1.5"/><rect x="713" y="234" width="6" height="6" rx="1.5"/>
+    <rect x="795" y="234" width="6" height="6" rx="1.5"/><rect x="811" y="234" width="6" height="6" rx="1.5"/>
+  </g>
+  <text x="324" y="294" class="mono wl">Human approval: approved → Send USDC runs once · denied / expired → nothing moves</text>
+
+  <!-- trust layer -->
+  <text x="324" y="328" class="mono cap">TRUST LAYER · automate-trust/</text>
+  <rect x="324" y="340" width="180" height="104" rx="10" class="card"/>
+  <text x="340" y="366" class="sans ft">Pending store</text>
+  <text x="340" y="388" class="sans fs">pauses a run at a step,</text>
+  <text x="340" y="404" class="sans fs">resumes it on the outcome's</text>
+  <text x="340" y="420" class="sans fs">wire · first outcome wins</text>
+
+  <rect x="520" y="340" width="180" height="104" rx="10" class="card"/>
+  <text x="536" y="366" class="sans ft">Link pages</text>
+  <text x="536" y="388" class="mono fs">/trust/approve</text>
+  <text x="536" y="404" class="mono fs">/trust/human  /trust/pay</text>
+  <text x="536" y="420" class="sans fs">public · token-only · no-store</text>
+
+  <rect x="716" y="340" width="180" height="104" rx="10" class="card"/>
+  <text x="732" y="366" class="sans ft">Watchers</text>
+  <text x="732" y="388" class="sans fs">Arc USDC transfers, 10 s</text>
+  <text x="732" y="404" class="sans fs">link expiry sweep</text>
+  <text x="732" y="420" class="sans fs">seal finished runs on 0G</text>
+
+
+  <!-- run record -->
+  <text x="324" y="478" class="mono cap">RUN RECORD</text>
+  <rect x="324" y="492" width="572" height="104" rx="10" class="card"/>
+  <text x="340" y="518" class="sans ft">Recent runs · Verify on 0G</text>
+  <text x="340" y="540" class="sans fs">record → canonical JSON → sha256 → 0G Storage root hash, chained to the contact's previous run</text>
+  <text x="340" y="558" class="sans fs">Verify re-downloads by root hash with the Merkle proof, re-hashes, and compares three digests</text>
+  <text x="340" y="576" class="sans fs">steps, timings, outcomes and tx hashes — never phone numbers or message text</text>
+
+  <!-- private engine -->
+  <text x="324" y="630" class="mono cap">PRIVATE ENGINE (EXCERPTS IN automate-trust/engine-excerpts/)</text>
+  <rect x="324" y="644" width="572" height="70" rx="10" class="node"/>
+  <text x="340" y="670" class="sans ft">Flow engine · Node</text>
+  <text x="340" y="692" class="sans fs">graph runtime · WhatsApp Cloud API · flow-waits · Recent runs · AI builder · flow checks</text>
+
+  <!-- sponsors -->
+  <text x="980" y="150" class="mono cap">ON-CHAIN AND AI</text>
+  <rect x="980" y="164" width="252" height="132" rx="12" class="card"/>
+  <text x="998" y="192" class="sans nt">World ID</text>
+  <text x="998" y="214" class="sans ns">Agent Pass — OIDC step-up</text>
+  <text x="998" y="230" class="mono fs">auth.world.org · id_token checked</text>
+  <text x="998" y="256" class="sans ns">IDKit — proof of human</text>
+  <text x="998" y="272" class="mono fs">/api/v4/verify · one per action</text>
+
+  <rect x="980" y="312" width="252" height="112" rx="12" class="card"/>
+  <text x="998" y="340" class="sans nt">Arc testnet · Circle</text>
+  <text x="998" y="362" class="sans ns">USDC pay link and refunds</text>
+  <text x="998" y="380" class="mono fs">USDC 0x3600…0000 · 6 dp</text>
+  <text x="998" y="396" class="mono fs">chain 5042002 · gas in USDC</text>
+
+  <rect x="980" y="440" width="252" height="112" rx="12" class="card"/>
+  <text x="998" y="468" class="sans nt">0G</text>
+  <text x="998" y="490" class="sans ns">Storage — run record → root hash</text>
+  <text x="998" y="508" class="sans ns">Compute Router — LLM answers</text>
+  <text x="998" y="530" class="mono fs">Galileo testnet</text>
+
+  <rect x="980" y="582" width="252" height="132" rx="12" class="card"/>
+  <text x="998" y="610" class="sans nt">Knowledge service · Python</text>
+  <text x="998" y="632" class="mono fs">knowledge/ in this repo</text>
+  <text x="998" y="652" class="sans ns">MetaCortex RAG → FastAPI</text>
+  <text x="998" y="670" class="sans ns">pgvector · hybrid search + RRF</text>
+  <text x="998" y="688" class="sans ns">Gemini embeddings · 0G answers</text>
+
+  <!-- Automate → sponsors -->
+  <path d="M920 230 H980" class="wire"/>
+  <path d="M920 368 H980" class="wire"/>
+  <path d="M920 496 H980" class="wire"/>
+  <path d="M920 648 H980" class="wire"/>
+  <g class="port">
+    <rect x="917" y="227" width="6" height="6" rx="1.5"/><rect x="977" y="227" width="6" height="6" rx="1.5"/>
+    <rect x="917" y="365" width="6" height="6" rx="1.5"/><rect x="977" y="365" width="6" height="6" rx="1.5"/>
+    <rect x="917" y="493" width="6" height="6" rx="1.5"/><rect x="977" y="493" width="6" height="6" rx="1.5"/>
+    <rect x="917" y="645" width="6" height="6" rx="1.5"/><rect x="977" y="645" width="6" height="6" rx="1.5"/>
+  </g>
+  <path d="M1200 582 V552" class="wire2"/>
+  <text x="1150" y="572" class="mono wl">answers</text>
+
+  <!-- footer -->
+  <text x="48" y="774" class="mono wl">github.com/automatlog/automate-w3 · automateplatform.in · MIT</text>
+</svg>
