@@ -108,6 +108,12 @@ sequenceDiagram
 - **Send.**
   - An ERC-20 `transfer` from the server wallet, signed with ethers and confirmed before the flow moves on.
   - It is bounded by `ARC_MAX_SEND_USDC`, and it runs only after an approval.
+- **Escrow: TrustEscrow, built in Arc Studio** ([`arc-escrow/`](arc-escrow), [Studio project](https://studio.arc.io/app/7870ac8f-cc09-46d8-8dc0-370f0dc9fc2a)).
+  - Deployed on Arc testnet at [`0xa20fca1ed130da973f4d6213e2487534b1d1b1a2`](https://explorer.testnet.arc.io/address/0xa20fca1ed130da973f4d6213e2487534b1d1b1a2), with 65 Foundry tests.
+  - It holds USDC per order. Only Automate's operator can `release` or `refund`.
+  - `pay` needs the operator's signature over `(chainid, contract, orderId, amount, deadline)`, so only the exact quoted amount can be paid.
+  - The payer can `reclaim` after 14 days, so a customer's money is never stuck.
+  - Arc Studio wrote, reviewed, tested and deployed it from our spec. We chose the signature fix after its review found order-ID squatting.
 - **Units.** USDC on Arc has 6 decimals through the ERC-20 interface (`0x3600…0000`) and 18 as the native gas token. All amount maths is exact string arithmetic, with no floats.
 
 ## 0G
@@ -183,6 +189,7 @@ automate-trust/
     routes.mjs      the public link pages
   scripts/          offline tests for world.mjs and arc.mjs
   engine-excerpts/  the parts of Automate's private engine that host the steps
+arc-escrow/         TrustEscrow contract, tests and pay page, built in Arc Studio
 knowledge/          Python RAG service (FastAPI, pgvector, 0G Router)
   metacortex_original/  the pre-existing files it was ported from, unchanged
 docs/

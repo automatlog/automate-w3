@@ -6,3 +6,6 @@ __pycache__/
 data/
 
 node_modules/
+
+# arc-studio pull bookkeeping
+arc-escrow/.arc-studio/
