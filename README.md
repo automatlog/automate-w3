@@ -11,7 +11,7 @@
 [![0G](https://img.shields.io/badge/0G-Storage%20%2B%20Router-D1D1D1?labelColor=070B07)](#0g)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8A918A?labelColor=070B07)](LICENSE)
 
-[**Live product: automateplatform.in**](https://automateplatform.in) · [Architecture](#architecture) · [Demo flow](#the-demo-flow) · [Run it](#run-it)
+[**Live product: automateplatform.in**](https://automateplatform.in) · [What is new vs reused](#continuity-before-and-during-the-event) · [Architecture](#architecture) · [Demo flow](#the-demo-flow) · [Run it](#run-it)
 
 </div>
 
@@ -32,6 +32,39 @@ At ETHGlobal Mumbai we added a **trust layer**: six new steps on Automate's canv
 | **Send USDC** | A refund or payout from the business's Arc wallet. It runs **only** right after an approval, and one approval allows one payment. | **Arc** testnet, USDC |
 | **Proof on 0G** | When the run ends, its record goes to 0G Storage. Anyone can re-download it by root hash and check it. | **0G Storage** |
 | **AI step / knowledge** | Answers from the business's documents (RAG), with the 0G request id kept on the step. | **0G Compute Router** + the Python knowledge service in this repo |
+
+## Continuity: before and during the event
+
+ETHGlobal Mumbai ran **5–7 Nov 2026** (IST). Automate existed before it, and the trust layer was built on top of it at the event. Below, **Reused** means it existed before 5 Nov and **New** means it was written during the event.
+
+### Reused: existed before the event
+
+| What | Where | Its role here |
+|---|---|---|
+| **Automate**, live at automateplatform.in before the event: the canvas, the flow walker, WhatsApp send and receive, the Wait step and its resume tick, Recent runs, the flow checks, the AI step and AI flow builder, accounts and sign-in | Automate's private repo (not in this repo) | It hosts the new steps. Only the code added at the event is shown, in [`engine-excerpts/`](automate-trust/engine-excerpts). |
+| **MetaCortex**, the author's Python RAG project (January to June 2026): chunking, PII masking, file loading, embeddings, a pgvector store, retrieval | [`knowledge/metacortex_original/`](knowledge/metacortex_original): seven files, byte-for-byte, with their SHA-256 hashes in [`PROVENANCE.md`](knowledge/metacortex_original/PROVENANCE.md) | Reference only: never imported or run. `knowledge/` was ported from it. |
+| **Open-source libraries**: ethers v6, `@worldcoin/idkit-core`, `@0gfoundation/0g-storage-ts-sdk`, OpenZeppelin, Foundry, FastAPI, pgvector | `package.json`, `requirements.txt`, `foundry.toml` | Used as dependencies, unmodified |
+
+### New: built at the event
+
+| What | Where |
+|---|---|
+| Pending store: a step pauses the run, and the run resumes on the outcome's wire | [`automate-trust/server/lib/trust/pending.mjs`](automate-trust/server/lib/trust/pending.mjs) |
+| World ID: Agent Pass approval, IDKit Proof of Human, and their pages | [`world.mjs`](automate-trust/server/lib/trust/world.mjs) |
+| Arc USDC: pay links, the payment watcher, refunds, the pay page, escrow mode | [`arc.mjs`](automate-trust/server/lib/trust/arc.mjs) |
+| TrustEscrow: the contract, 65 Foundry tests and the pay page, written with Arc Studio and deployed on Arc testnet | [`arc-escrow/`](arc-escrow) |
+| 0G: the canonical run record, sealing and verifying on 0G Storage, and the public "verify a run" page | [`zg.mjs`](automate-trust/server/lib/trust/zg.mjs), [`routes.mjs`](automate-trust/server/lib/trust/routes.mjs) |
+| The AI step on the 0G Compute Router, keeping its request id | [`zg-router.mjs`](automate-trust/server/lib/trust/zg-router.mjs) |
+| Inside Automate: the six canvas steps, their runtime, the flow checks for them, Proof on 0G on the run page, and the demo recipe | [`engine-excerpts/`](automate-trust/engine-excerpts): each file names the private file it comes from, and every block in it is dated |
+| Sign in with MetaMask (EIP-4361), from the browser extension or by QR code with the 6-digit relay guard | [`engine-excerpts/wallet-signin/`](automate-trust/engine-excerpts/wallet-signin) |
+| The knowledge service, ported from MetaCortex and rewritten: API embeddings instead of a local model, a pgvector collection per knowledge base plus a tsvector keyword table, hybrid retrieval fused with RRF, answers from the 0G Router, a FastAPI app with bearer auth | [`knowledge/`](knowledge) (everything outside `metacortex_original/`) |
+| Every test in this repo: World ID 71, Arc 81, escrow 23, the engine flow 46, Python 31 | `automate-trust/scripts/`, `engine-excerpts/`, `tests/` |
+
+### How to check
+
+- **Commits.** Only one commit brings in older code: `f87d344`, "Import pre-existing MetaCortex RAG files, unchanged (pre-event work)". Every other commit was made at the event, and most say "(new work)" in their message. Run `git log --format='%h %ad %s' --date=iso` to see them.
+- **The MetaCortex originals.** Hash the seven files and compare them with `PROVENANCE.md`, then diff them against `knowledge/` to see what was rewritten.
+- **The changelog.** [`CHANGELOG.md`](CHANGELOG.md) lists the work day by day, with the pre-existing work in its own section.
 
 ## Architecture
 
@@ -222,7 +255,6 @@ docs/
 
 - Make Human approval the default before every payout and bulk send in Automate.
 - Run Arc Nanopayments and x402 for agent-to-agent payments.
-- Add a public "verify this run" page that needs no Automate account.
 - Move to mainnet once a business asks for it.
 
 ## License
