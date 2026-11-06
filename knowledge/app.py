@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from . import config
 from .chunking import split_text
-from .errors import BadRequest, KnowledgeError
+from .errors import BadRequest, KnowledgeError, Unauthorized
 from .loader import extract_text
 from .retrieval import hybrid_search
 from .store import validate_kb_id
@@ -55,7 +55,7 @@ def create_app(store=None, llm=None) -> FastAPI:
         if authorization and authorization.lower().startswith("bearer "):
             given = authorization[7:].strip()
         if not hmac.compare_digest(given.encode(), expected.encode()):
-            raise KnowledgeError_unauthorized()
+            raise Unauthorized()
 
     @app.exception_handler(KnowledgeError)
     async def on_error(_: Request, exc: KnowledgeError):
@@ -116,13 +116,6 @@ def create_app(store=None, llm=None) -> FastAPI:
         return result
 
     return app
-
-
-class KnowledgeError_unauthorized(KnowledgeError):
-    status = 401
-
-    def __init__(self):
-        super().__init__("missing or wrong bearer token")
 
 
 app = create_app()

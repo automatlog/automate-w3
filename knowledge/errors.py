@@ -15,3 +15,10 @@ class BadRequest(KnowledgeError):
 
 class UpstreamError(KnowledgeError):
     status = 502
+
+
+class Unauthorized(KnowledgeError):
+    status = 401
+
+    def __init__(self):
+        super().__init__('missing or wrong bearer token')
