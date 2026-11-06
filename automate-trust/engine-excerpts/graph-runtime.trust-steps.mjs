@@ -74,7 +74,7 @@
               if (kind === 'pay') {
                 const { newPayment } = await import('./trust/arc.mjs')
                 const amount = substitute(String(d.amount || ''), ctx(), 'curly').trim()
-                Object.assign(data, await newPayment({ amount, label: substitute(String(d.label || label), ctx(), 'curly').trim().slice(0, 80) }), { amount })
+                Object.assign(data, await newPayment({ amount, label: substitute(String(d.label || label), ctx(), 'curly').trim().slice(0, 80), minutes }), { amount })
               }
               row = P.createPending({ kind, ttlMs: minutes * 60_000, data, ...where, workspaceId: graphWorkspace(), phoneId: evt.phoneId, wabaId: evt.wabaId, profileName: evt.profileName || '', flowKey: currentFlowKey(evt) })
             }
@@ -104,14 +104,19 @@
                approval, one payment. Enforced here, not left to how the flow
                happens to be wired. */
             const APPROVAL_FRESH_MS = 15 * 60_000
+            /* 'send' = a transfer from the account's wallet; 'refund' / 'release' =
+               settle the escrowed order {{usdc_order}} (TrustEscrow, built in Arc
+               Studio): back to the payer, or on to the business. */
+            const how = ['refund', 'release'].includes(d.action) ? d.action : 'send'
+            const order = substitute(String(d.order || '{{usdc_order}}'), ctx(), 'curly').trim()
             const to = substitute(String(d.to || '{{usdc_payer}}'), ctx(), 'curly').trim()
-            const amount = substitute(String(d.amount || ''), ctx(), 'curly').trim()
+            const amount = how === 'send' ? substitute(String(d.amount || ''), ctx(), 'curly').trim() : String(session.vars?.usdc_amount || '').replace(/\s*USDC$/, '')
             const leave = (port, why) => {
               if (why) push('flow', `Send USDC: ${why}`)
               const wire = edgeFrom(node.id, port)
               return wire ? nodeById(wire.target) : null
             }
-            if (isTestRun(evt)) { push('flow', `TEST — would send ${amount} USDC to ${to} on Arc (not sent in a test)`); node = leave('out'); continue }
+            if (isTestRun(evt)) { push('flow', how === 'send' ? `TEST — would send ${amount} USDC to ${to} on Arc (not sent in a test)` : `TEST — would ${how} the escrowed order on Arc (not done in a test)`); node = leave('out'); continue }
             const approvedAt = Number(session.vars?.trust_approval_at || 0)
             if (!approvedAt || Date.now() - approvedAt > APPROVAL_FRESH_MS) {
               push('trust', 'Send USDC refused — no fresh Human approval', { step: 'usdc_send', node: node.id, outcome: 'refused', amount, at: new Date().toISOString() })
@@ -120,11 +125,12 @@
             }
             setVar(session, 'trust_approval_at', '')
             try {
-              const { sendUsdc } = await import('./trust/arc.mjs')
-              const r = await sendUsdc({ to, amount })
+              const A = await import('./trust/arc.mjs')
+              const r = how === 'send' ? await A.sendUsdc({ to, amount }) : await A.settleEscrow({ orderId: order, action: how })
               setVar(session, varOr(d.variable, 'usdc_sent_tx'), r.txHash)
               setVar(session, 'usdc_sent_link', r.explorerUrl || '')
-              push('trust', `sent ${amount} USDC on Arc`, { step: 'usdc_send', node: node.id, outcome: 'sent', amount, tx: r.txHash, chain: 'arc-testnet', at: new Date().toISOString() })
+              const what = how === 'send' ? 'sent' : how === 'refund' ? 'refunded' : 'released'
+              push('trust', `${what} ${amount} USDC on Arc${how === 'send' ? '' : ' (escrow)'}`, { step: 'usdc_send', node: node.id, outcome: what, amount, tx: r.txHash, chain: 'arc-testnet', at: new Date().toISOString() })
               node = leave('out')
             } catch (e) {
               node = leave('err', `not sent — ${e.message}`)

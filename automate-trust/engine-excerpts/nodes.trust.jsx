@@ -1,7 +1,7 @@
 /*
  * EXCERPT from Automate's private engine (app/flow/nodes.jsx — the canvas cards and their wires), ETHGlobal Mumbai, 6 Nov 2026.
  * Shown for review: it runs inside Automate (automateplatform.in) and does not
- * run on its own here. Everything else in this file's original is pre-existing.
+ * run on its own here.
  */
 
   /* Trust steps (6 Nov 2026, ETHGlobal Mumbai) — shared/nodeSpecs.js. */
@@ -26,7 +26,7 @@
   },
   usdc_send: {
     label: 'Send USDC', glyph: 'check', tone: 'plain',
-    subtitle: (d) => `Arc · ${d.amount || '?'} USDC → ${clip(d.to || '{{usdc_payer}}', 18)}`,
+    subtitle: (d) => (d.action === 'refund' ? 'Arc escrow · refund to the payer' : d.action === 'release' ? 'Arc escrow · release to the business' : `Arc · ${d.amount || '?'} USDC → ${clip(d.to || '{{usdc_payer}}', 18)}`),
     targets: [{ id: 'in', pos: L }],
     sources: [{ id: 'out', pos: R, label: 'sent' }, { id: 'err', pos: R, label: 'failed' }],
   },

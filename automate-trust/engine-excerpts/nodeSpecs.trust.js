@@ -1,7 +1,7 @@
 /*
- * EXCERPT from Automate's private engine (shared/nodeSpecs.js — the builder panel fields of the five steps), ETHGlobal Mumbai, 6 Nov 2026.
+ * EXCERPT from Automate's private engine (shared/nodeSpecs.js — the builder panel fields of the trust steps), ETHGlobal Mumbai, 6 Nov 2026.
  * Shown for review: it runs inside Automate (automateplatform.in) and does not
- * run on its own here. Everything else in this file's original is pre-existing.
+ * run on its own here.
  */
 
   /* ── Trust steps (6 Nov 2026, ETHGlobal Mumbai) — World ID, USDC on Arc,
@@ -40,11 +40,13 @@
   usdc_send: {
     title: 'Send USDC (Arc)',
     fields: [
-      { key: 'to', label: 'To wallet', type: 'text', expr: true, required: true, default: '{{usdc_payer}}' },
-      { key: 'amount', label: 'Amount (USDC)', type: 'text', expr: true, required: true, placeholder: '12.50 or {{amount}}' },
+      { key: 'action', label: 'What to do', type: 'select', default: 'send', options: [['send', 'Send from this account\'s wallet'], ['refund', 'Refund the escrowed order to the payer'], ['release', 'Release the escrowed order to the business']], description: 'Refund and release settle the order Collect USDC paid into escrow (TrustEscrow on Arc), {{usdc_order}}.' },
+      { key: 'order', label: 'Escrowed order', type: 'text', expr: true, default: '{{usdc_order}}', show: (d) => ['refund', 'release'].includes(d.action) },
+      { key: 'to', label: 'To wallet', type: 'text', expr: true, required: true, default: '{{usdc_payer}}', show: (d) => !['refund', 'release'].includes(d.action) },
+      { key: 'amount', label: 'Amount (USDC)', type: 'text', expr: true, required: true, placeholder: '12.50 or {{amount}}', show: (d) => !['refund', 'release'].includes(d.action) },
       { key: 'variable', label: 'Save the transaction as', type: 'text', default: 'usdc_sent_tx' },
     ],
-    hint: 'Sends USDC from this account\'s Arc wallet — a refund or payout. It runs **only right after a Human approval that came back approved** (one approval, one payment); otherwise it leaves by **failed** and nothing is sent.',
+    hint: 'Moves USDC on Arc: a transfer from this account\'s wallet, or (when Collect USDC used the escrow) a **refund** of the escrowed order to the payer or its **release** to the business. It runs **only right after a Human approval that came back approved** (one approval, one payment); otherwise it leaves by **failed** and nothing moves.',
   },
   proof0g: {
     title: 'Proof on 0G',

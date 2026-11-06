@@ -290,6 +290,25 @@ check('the AI step runs on the Router (OpenAI-compatible) and keeps x_0g_trace.r
 const recAi = JSON.stringify(Z.proofRecord({ ...exec, steps: [{ type: 'trust', msg: 'x', detail: { step: 'aistep', outcome: 'answered', provider: '0g-router', model: 'glm-5.2', requestId: '0g-req-42' } }] }))
 check('…and the request id goes into the run record on 0G', recAi.includes('0g-req-42') && recAi.includes('0g-router'))
 
+/* ── 11. Send USDC refunds the escrowed order (TrustEscrow) ─────────────── */
+process.env.ARC_ESCROW_ADDRESS = '0x00000000000000000000000000000000000e5c40'
+const ORDER = `0x${'ab'.repeat(32)}`
+const escrowFlow = { nodes: [CHANNEL, N('trigger', 'trigger', { keywords: 'escrow' }), N('approve', 'world_approval', { summary: 'Refund the escrowed order', minutes: 30 }), N('refund', 'usdc_send', { action: 'refund' }), N('done', 'msg', { msgType: 'text', body: 'Refunded from escrow: {{usdc_sent_tx}}' }), N('nope', 'msg', { msgType: 'text', body: 'No.' }), N('late', 'msg', { msgType: 'text', body: 'Late.' })],
+  edges: [{ id: 'e0', source: 'channel', sourceHandle: 'out', target: 'trigger', targetHandle: 'src' }, E('trigger', 'out', 'approve'), E('approve', 'approved', 'refund'), E('approve', 'denied', 'nope'), E('approve', 'expired', 'late'), E('refund', 'out', 'done')] }
+const g = person()
+await g.say('escrow', escrowFlow)
+await P.resolvePending(P.openAt({ slug: 'shop', from: g.from, nodeId: 'approve' }).id, 'approved', { usdc_order: ORDER, usdc_amount: '12.50 USDC' })
+n0 = chain.raw.length
+out = await g.resume('approve', escrowFlow)
+const etx = chain.raw[n0] ? Transaction.from(chain.raw[n0]) : null
+const ecall = etx ? new Interface(['function refund(bytes32 orderId)']).parseTransaction({ data: etx.data }) : null
+check('"approved" → Send USDC (refund) signs refund(orderId) to the escrow, not a plain transfer', chain.raw.length === n0 + 1 && etx.to.toLowerCase() === process.env.ARC_ESCROW_ADDRESS && ecall?.name === 'refund' && ecall.args[0] === ORDER, JSON.stringify({ n: chain.raw.length - n0, to: etx?.to, fn: ecall?.name }))
+check('…and the customer is told with the tx', out.some((x) => text(x.payload) === `Refunded from escrow: ${etx?.hash}`), JSON.stringify(out.map((x) => text(x.payload))))
+check('…and the trust record says "refunded" with the tx', events.some((e) => e.type === 'trust' && e.detail?.step === 'usdc_send' && e.detail.outcome === 'refunded' && e.detail.tx === etx?.hash))
+const lintEscrow = lintGraph(escrowFlow)
+check('a refund/release Send USDC needs no amount in the flow checks', !lintEscrow.some((i) => i.nodeId === 'refund' && i.level === 'error'), JSON.stringify(lintEscrow.filter((i) => i.nodeId === 'refund')))
+delete process.env.ARC_ESCROW_ADDRESS
+
 P.flushPending()
 check('nothing outside the fakes was reached', outside.length === 0, outside.join(', '))
 console.log(`\n${pass}/${total} passed`)

@@ -1,7 +1,7 @@
 /*
  * EXCERPT from Automate's private engine (server/webhook-core.mjs — run sealing, link pages, timers), ETHGlobal Mumbai, 6 Nov 2026.
  * Shown for review: it runs inside Automate (automateplatform.in) and does not
- * run on its own here. Everything else in this file's original is pre-existing.
+ * run on its own here.
  */
 
 /* ── finishRun — a trust pause is "waiting" ── */
@@ -52,7 +52,7 @@
     }
 
 
-/* ── timers: resume at once, expire links, watch Arc ── */
+/* ── timers: resume at once, expire links, watch Arc (direct transfers and escrow Paid events) ── */
   /* Trust steps (6 Nov, ETHGlobal) — trust/pending.mjs. An outcome resumes its
      run at once rather than on the next 30-s tick; every 10 s, links past
      their time expire and Arc is asked for the USDC transfers that open
@@ -70,7 +70,7 @@
         const { findPayments } = await import('./lib/trust/arc.mjs')
         for (const hit of await findPayments(pays)) {
           const row = P.getPending(hit.id)
-          const r = await P.resolvePending(hit.id, 'paid', { usdc_tx: hit.txHash, usdc_payer: hit.payer, usdc_amount: row?.data?.amountText || '' })
+          const r = await P.resolvePending(hit.id, 'paid', { usdc_tx: hit.txHash, usdc_payer: hit.payer, usdc_amount: row?.data?.amountText || '', usdc_order: row?.data?.orderId || '' })
           if (r) push('flow', `USDC received on Arc for ${r.from} — ${hit.txHash}`, undefined, r.workspaceId || null)
         }
       }

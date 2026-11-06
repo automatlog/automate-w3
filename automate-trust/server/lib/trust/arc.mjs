@@ -17,7 +17,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { Wallet, isAddress, getAddress, Interface } from 'ethers'
+import { Wallet, isAddress, getAddress, Interface, AbiCoder, keccak256, getBytes, hexlify, randomBytes } from 'ethers'
 
 export const ARC_CHAIN_ID = 5042002
 const DEFAULT_RPC = 'https://rpc.testnet.arc.io'
@@ -175,7 +175,7 @@ function freeOpen(units) {
  * Validate the price and hand back the exact amount to ask for.
  * `amount` is what the merchant typed (max 2 decimals); the tag is ours.
  */
-export async function newPayment({ amount, label } = {}) {
+export async function newPayment({ amount, label, minutes } = {}) {
   const cfg = arcConfig()
   if (!cfg.ready) throw new Error(`Arc payments are not set up: set ${cfg.missing.join(', ')}`)
   const raw = String(amount ?? '').trim()
@@ -183,6 +183,7 @@ export async function newPayment({ amount, label } = {}) {
   const base = BigInt(toUnits(raw))
   if (base <= 0n) throw new Error('Amount must be more than 0')
   if (base > BigInt(MAX_REQUEST_USDC) * 10n ** 6n) throw new Error(`Amount cannot be more than ${MAX_REQUEST_USDC} USDC`)
+  if (escrowAddress()) return newEscrowPayment({ units: base.toString(), label, minutes })
 
   const open = loadOpen()
   let units = ''
@@ -215,8 +216,11 @@ const pad32 = (addr) => `0x${addr.toLowerCase().replace(/^0x/, '').padStart(64, 
  * equals a pending request exactly. A transaction hash can settle one request once.
  */
 export async function findPayments(pendings) {
-  const open = (pendings || []).filter((p) => p && p.kind === 'pay' && p.status === 'pending' && p.data?.amountUnits && p.data?.merchant)
-  if (!open.length) return []
+  const all = (pendings || []).filter((p) => p && p.kind === 'pay' && p.status === 'pending')
+  const escrowRows = all.filter((p) => p.data?.mode === 'escrow')
+  const found0 = escrowRows.length ? await findEscrowPayments(escrowRows) : []
+  const open = all.filter((p) => p.data?.mode !== 'escrow' && p.data?.amountUnits && p.data?.merchant)
+  if (!open.length) return found0
   const latest = hexToNum(await rpc('eth_blockNumber'))
   let from = Math.min(...open.map((p) => (Number.isFinite(p.data.fromBlock) ? p.data.fromBlock : Math.max(0, latest - 1000))))
   from = Math.max(from, latest - MAX_WINDOWS_PER_CALL * LOG_WINDOW_BLOCKS + 1, 0)
@@ -259,7 +263,7 @@ export async function findPayments(pendings) {
     freeOpen(p.data.amountUnits)
   }
   if (found.length) writeJson(dataFile('arc-seen.json'), [...seen].slice(-MAX_SEEN))
-  return found
+  return [...found0, ...found]
 }
 
 /* ---------- paying out ---------- */
@@ -312,6 +316,138 @@ export async function sendUsdc({ to, amount } = {}) {
   }
 }
 
+/* ---------- escrow mode: TrustEscrow, built in Arc Studio (6 Nov 2026, ETHGlobal) ----------
+ *
+ * With ARC_ESCROW_ADDRESS set, a payment goes INTO the escrow instead of
+ * straight to the merchant, and only the operator (this server's wallet) can
+ * release it to the merchant or refund it to the payer — and the flow lets it
+ * do so only after a Human approval. The customer can reclaim after 14 days if
+ * nobody acts. The contract (arc-escrow/ in automate-w3) takes
+ *
+ *   pay(bytes32 orderId, uint256 amount, uint256 deadline, bytes signature)
+ *
+ * where `signature` is the operator's EIP-191 signature over
+ * keccak256(abi.encode(chainid, escrow, orderId, amount, deadline)) — so only
+ * the exact amount we quoted, for this order, before the deadline, is payable.
+ * Matching is by orderId (an indexed topic of Paid), not by a unique amount.
+ */
+const ESCROW_ABI = new Interface([
+  'function pay(bytes32 orderId, uint256 amount, uint256 deadline, bytes signature)',
+  'function release(bytes32 orderId)',
+  'function refund(bytes32 orderId)',
+  'function operator() view returns (address)',
+  'event Paid(bytes32 indexed orderId, address indexed payer, uint256 amount)',
+])
+const USDC_ABI = new Interface(['function approve(address spender, uint256 amount) returns (bool)'])
+const PAID_TOPIC = ESCROW_ABI.getEvent('Paid').topicHash
+
+export const escrowAddress = () => { const a = env('ARC_ESCROW_ADDRESS'); return a && isAddress(a) ? getAddress(a) : '' }
+
+/** The digest the contract checks (before the EIP-191 prefix). */
+export function escrowDigest({ escrow, orderId, units, deadline, chainId = ARC_CHAIN_ID }) {
+  return keccak256(AbiCoder.defaultAbiCoder().encode(['uint256', 'address', 'bytes32', 'uint256', 'uint256'], [BigInt(chainId), getAddress(escrow), orderId, BigInt(units), BigInt(deadline)]))
+}
+
+let operatorChecked = ''
+async function operatorWallet(escrow) {
+  const key = env('ARC_PRIVATE_KEY')
+  if (!key) throw new Error('Escrow payments need ARC_PRIVATE_KEY (the escrow operator) to sign them')
+  let wallet
+  try { wallet = new Wallet(key) } catch { throw new Error('ARC_PRIVATE_KEY is not a valid key') }
+  /* Once per escrow and key: a key that is not the contract's operator would
+     sign payment links the contract refuses — say so now, not at the customer's tap. */
+  if (operatorChecked !== `${escrow}:${wallet.address}`) {
+    const op = ESCROW_ABI.decodeFunctionResult('operator', await rpc('eth_call', [{ to: escrow, data: ESCROW_ABI.encodeFunctionData('operator') }, 'latest']))[0]
+    if (getAddress(op) !== wallet.address) throw new Error(`ARC_PRIVATE_KEY is not the escrow's operator (${op}); payments it signs would be refused`)
+    operatorChecked = `${escrow}:${wallet.address}`
+  }
+  return wallet
+}
+
+async function newEscrowPayment({ units, label, minutes }) {
+  const escrow = escrowAddress()
+  const wallet = await operatorWallet(escrow)
+  const orderId = hexlify(randomBytes(32))
+  const mins = Number(minutes) > 0 ? Number(minutes) : payMinutes()
+  const deadline = Math.floor(Date.now() / 1000) + Math.round(mins * 60)
+  const signature = await wallet.signMessage(getBytes(escrowDigest({ escrow, orderId, units, deadline })))
+  const latest = hexToNum(await rpc('eth_blockNumber'))
+  return {
+    mode: 'escrow',
+    escrow,
+    orderId,
+    deadline,
+    amountUnits: units,
+    amountText: `${fromUnits(units)} USDC`,
+    label: String(label || '').slice(0, 120),
+    merchant: escrow,
+    chainId: ARC_CHAIN_ID,
+    usdc: USDC_ADDRESS,
+    approveData: USDC_ABI.encodeFunctionData('approve', [escrow, BigInt(units)]),
+    payData: ESCROW_ABI.encodeFunctionData('pay', [orderId, BigInt(units), BigInt(deadline), signature]),
+    fromBlock: Math.max(0, latest - FROM_BLOCK_MARGIN),
+  }
+}
+
+/** Paid(orderId, payer, amount) events for the open escrow orders, exact amount only. */
+async function findEscrowPayments(rows) {
+  const latest = hexToNum(await rpc('eth_blockNumber'))
+  let from = Math.min(...rows.map((p) => (Number.isFinite(p.data.fromBlock) ? p.data.fromBlock : Math.max(0, latest - 1000))))
+  from = Math.max(from, latest - MAX_WINDOWS_PER_CALL * LOG_WINDOW_BLOCKS + 1, 0)
+  const byEscrow = new Map()
+  for (const p of rows) { const k = getAddress(p.data.escrow); if (!byEscrow.has(k)) byEscrow.set(k, []); byEscrow.get(k).push(p) }
+  const found = []
+  for (const [escrow, list] of byEscrow) {
+    const ids = list.map((p) => String(p.data.orderId).toLowerCase())
+    for (let start = from; start <= latest; start += LOG_WINDOW_BLOCKS) {
+      const end = Math.min(latest, start + LOG_WINDOW_BLOCKS - 1)
+      const logs = await rpc('eth_getLogs', [{ fromBlock: `0x${start.toString(16)}`, toBlock: `0x${end.toString(16)}`, address: escrow, topics: [PAID_TOPIC, ids.length === 1 ? ids[0] : ids] }])
+      for (const l of Array.isArray(logs) ? logs : []) {
+        if (!l || l.removed || !Array.isArray(l.topics) || l.topics[0] !== PAID_TOPIC) continue
+        const p = list.find((x) => String(x.data.orderId).toLowerCase() === String(l.topics[1]).toLowerCase())
+        if (!p || found.some((f) => f.id === p.id)) continue
+        let units
+        try { units = BigInt(l.data).toString() } catch { continue }
+        if (units !== p.data.amountUnits) continue
+        found.push({ id: p.id, txHash: l.transactionHash, payer: getAddress(`0x${String(l.topics[2]).slice(-40)}`), blockNumber: hexToNum(l.blockNumber), orderId: p.data.orderId })
+      }
+    }
+  }
+  return found
+}
+
+/** The server wallet sends one contract call and waits for it to be confirmed. */
+async function sendTx(to, data, what) {
+  const key = env('ARC_PRIVATE_KEY')
+  if (!key) throw new Error(`Cannot ${what}: ARC_PRIVATE_KEY is not set`)
+  let wallet
+  try { wallet = new Wallet(key) } catch { throw new Error(`Cannot ${what}: ARC_PRIVATE_KEY is not a valid key`) }
+  const nonce = hexToNum(await rpc('eth_getTransactionCount', [wallet.address, 'pending']))
+  const gasPrice = BigInt(await rpc('eth_gasPrice'))
+  const gas = BigInt(await rpc('eth_estimateGas', [{ from: wallet.address, to, data }]))
+  const raw = await wallet.signTransaction({ type: 0, chainId: ARC_CHAIN_ID, nonce, to, data, value: 0n, gasLimit: gas + gas / 5n, gasPrice: gasPrice + gasPrice / 5n })
+  const txHash = await rpc('eth_sendRawTransaction', [raw])
+  const deadline = Date.now() + CONFIRM_TIMEOUT_MS
+  for (;;) {
+    const r = await rpc('eth_getTransactionReceipt', [txHash])
+    if (r) {
+      if (r.status === '0x0') throw new Error(`Could not ${what}: rejected on chain (${explorerTx(txHash)})`)
+      return { txHash, explorerUrl: explorerTx(txHash) }
+    }
+    if (Date.now() > deadline) throw new Error(`Sent, but not confirmed in time; check ${explorerTx(txHash)}`)
+    await new Promise((r2) => setTimeout(r2, CONFIRM_POLL_MS))
+  }
+}
+
+/** Refund the escrowed order to its payer, or release it to the merchant. Operator only. */
+export async function settleEscrow({ orderId, action } = {}) {
+  const escrow = escrowAddress()
+  if (!escrow) throw new Error('No escrow is set up (ARC_ESCROW_ADDRESS)')
+  if (!/^0x[0-9a-fA-F]{64}$/.test(String(orderId || ''))) throw new Error('There is no escrowed order to settle — {{usdc_order}} is empty')
+  if (action !== 'refund' && action !== 'release') throw new Error('The escrow can only refund or release')
+  return sendTx(escrow, ESCROW_ABI.encodeFunctionData(action, [orderId]), `${action} the escrowed USDC`)
+}
+
 /* ---------- the pay page ---------- */
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
@@ -321,8 +457,12 @@ const jsonForScript = (v) => JSON.stringify(v).replace(/</g, '\\u003c').replace(
 
 export function payPageHtml({ pending, statusUrl, state = 'open', txHash = '', message = '' } = {}) {
   const d = pending?.data || {}
+  const escrowMode = d.mode === 'escrow'
   const cfg = {
     state,
+    escrow: escrowMode ? d.escrow : '',
+    approveData: escrowMode ? d.approveData : '',
+    payData: escrowMode ? d.payData : '',
     statusUrl: String(statusUrl || ''),
     merchant: d.merchant || '',
     usdc: d.usdc || USDC_ADDRESS,
@@ -345,6 +485,14 @@ export function payPageHtml({ pending, statusUrl, state = 'open', txHash = '', m
       <p class="note">This payment request has expired. Ask for a new one in the chat.</p>`
   } else if (state === 'error') {
     body = `<h1>Payment unavailable</h1><p class="note">${esc(message || 'Something went wrong. Please try again from the chat.')}</p>`
+  } else if (escrowMode) {
+    body = `<h1>${esc(label)}</h1>
+      <p class="amt">${esc(amount)}</p>
+      <p class="note">Held safely in escrow on Arc until your order is confirmed. If nobody acts, you can take it back after 14 days.</p>
+      <button id="pay" class="btn" type="button">Pay with wallet</button>
+      <p id="msg" class="note" role="status"></p>
+      <div class="box"><span class="k">Escrow contract</span><code>${esc(cfg.escrow)}</code></div>
+      <p class="note">Your wallet asks twice: once to allow the USDC, once to pay. Testnet USDC on Arc: <a class="link" href="https://faucet.circle.com" rel="noopener">faucet.circle.com</a>.</p>`
   } else {
     body = `<h1>${esc(label)}</h1>
       <p class="amt">${esc(amount)}</p>
@@ -357,7 +505,29 @@ export function payPageHtml({ pending, statusUrl, state = 'open', txHash = '', m
       <p class="note">Testnet USDC on Arc. Need some? Get it from <a class="link" href="https://faucet.circle.com" rel="noopener">faucet.circle.com</a>.</p>`
   }
 
-  const script = state === 'open' ? `<script type="module">
+  const script = state === 'open' && escrowMode ? `<script type="module">
+const C=${jsonForScript(cfg)};
+const $=id=>document.getElementById(id);const say=t=>{$('msg').textContent=t};
+const pad=h=>h.replace(/^0x/,'').toLowerCase().padStart(64,'0');
+const wait=async(eth,h)=>{for(let i=0;i<90;i++){const r=await eth.request({method:'eth_getTransactionReceipt',params:[h]});if(r)return r.status!=='0x0';await new Promise(x=>setTimeout(x,2000))}return false};
+$('pay').onclick=async()=>{
+  const eth=window.ethereum;if(!eth){say('Open this link in a wallet browser (MetaMask) to pay.');return}
+  const hex='0x'+C.chainId.toString(16);
+  try{
+    try{await eth.request({method:'wallet_switchEthereumChain',params:[{chainId:hex}]})}
+    catch(e){if(e&&e.code===4902){await eth.request({method:'wallet_addEthereumChain',params:[{chainId:hex,chainName:'Arc Testnet',nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},rpcUrls:[C.rpcUrl],blockExplorerUrls:[C.explorer]}]})}else throw e}
+    const [from]=await eth.request({method:'eth_requestAccounts'});
+    const allowance=BigInt(await eth.request({method:'eth_call',params:[{to:C.usdc,data:'0xdd62ed3e'+pad(from)+pad(C.escrow)},'latest']}));
+    if(allowance<BigInt(C.units)){say('Step 1 of 2: allow the USDC…');const h=await eth.request({method:'eth_sendTransaction',params:[{from,to:C.usdc,data:C.approveData}]});if(!await wait(eth,h)){say('The allowance did not go through. Try again.');return}}
+    say('Step 2 of 2: pay into escrow…');
+    await eth.request({method:'eth_sendTransaction',params:[{from,to:C.escrow,data:C.payData}]});
+    say('Sent. Waiting for it to arrive…');
+  }catch(e){say(e&&e.code===4001?'Cancelled in the wallet.':'The wallet could not send it. Please try again.')}
+};
+const poll=async()=>{try{const r=await fetch(C.statusUrl,{headers:{accept:'application/json'}});const j=await r.json();if(j.status==='paid'||j.status==='expired')location.reload()}catch{}};
+setInterval(poll,4000);
+</script>`
+  : state === 'open' ? `<script type="module">
 const C=${jsonForScript(cfg)};const Q=${jsonForScript(eip681)};
 const $=id=>document.getElementById(id);const say=t=>{$('msg').textContent=t};
 const pad=h=>h.replace(/^0x/,'').toLowerCase().padStart(64,'0');

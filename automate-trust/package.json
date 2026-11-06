@@ -7,7 +7,7 @@
   "license": "MIT",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "node scripts/test-trust-world.mjs && node scripts/test-trust-arc.mjs"
+    "test": "node scripts/test-trust-world.mjs && node scripts/test-trust-arc.mjs && node scripts/test-trust-escrow.mjs"
   },
   "dependencies": {
     "@0gfoundation/0g-storage-ts-sdk": "1.2.13",

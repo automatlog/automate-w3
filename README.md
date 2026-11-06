@@ -114,6 +114,11 @@ sequenceDiagram
   - `pay` needs the operator's signature over `(chainid, contract, orderId, amount, deadline)`, so only the exact quoted amount can be paid.
   - The payer can `reclaim` after 14 days, so a customer's money is never stuck.
   - Arc Studio wrote, reviewed, tested and deployed it from our spec. We chose the signature fix after its review found order-ID squatting.
+  - **Wired into Automate** (escrow mode, on when `ARC_ESCROW_ADDRESS` is set):
+    - Collect USDC signs each order, and the pay page sends `approve`, then `pay`.
+    - The watcher matches the escrow's `Paid` event by order ID.
+    - Send USDC can **refund** or **release** the escrowed order, still only right after an approval.
+    - We simulated `pay` against the deployed contract with `eth_call`: our signature passes, and a changed amount or order ID gets `BadSignature()`.
 - **Units.** USDC on Arc has 6 decimals through the ERC-20 interface (`0x3600…0000`) and 18 as the native gas token. All amount maths is exact string arithmetic, with no floats.
 
 ## 0G
@@ -122,6 +127,15 @@ sequenceDiagram
   - When a run that passed this step ends, its record is turned into **canonical JSON** (keys sorted), hashed with sha256, and uploaded with the 0G TS SDK. The run keeps the root hash, the tx and the digest.
   - **Verify** downloads the record by root hash with the Merkle proof and compares three digests: the downloaded one, the one stored at sealing, and the record rebuilt from the run now. So a changed upload *and* a run edited afterwards both show.
 - **Compute Router.** Automate's AI step can run on `router-api.0g.ai` ([`zg-router.mjs`](automate-trust/server/lib/trust/zg-router.mjs)), and so can the knowledge service ([`knowledge/llm.py`](knowledge/llm.py)). Both keep the Router's `x_0g_trace.request_id`, and the AI step's request id goes into the run's record on 0G, so a sealed run says which 0G request produced its AI output.
+
+## Sign in with MetaMask
+
+Automate's login page now also offers **Sign in with MetaMask**, using Sign-In with Ethereum (EIP-4361). See [`engine-excerpts/wallet-signin/`](automate-trust/engine-excerpts/wallet-signin).
+
+- **Linking.** Automate is invite-only, so a wallet is first **linked** to an existing account, from Settings while signed in.
+- **Signing in.** The wallet signs a one-time message (domain, origin, nonce, a 10-minute window, and a statement for what it is for). The server checks the message and opens a session for **that** account. It uses a one-time Supabase token, and no email is sent.
+- **Unlinked wallets** get no session, and a new account is never created.
+- **Tests:** 24 checks, covering replays, other websites, wrong statements, another wallet's signature, and one wallet per account.
 
 ## Knowledge service (Python)
 
@@ -144,7 +158,7 @@ Details: [`knowledge/README.md`](knowledge/README.md).
 ```bash
 cd automate-trust
 npm install
-npm test        # World ID: 71 checks · Arc USDC: 81 checks
+npm test        # World ID: 71 · Arc USDC: 81 · Arc escrow: 23
 ```
 
 **Knowledge service (Python 3.12).**
@@ -173,7 +187,8 @@ uvicorn knowledge.app:app --port 8000
 |---|---|---|
 | `automate-trust/scripts/test-trust-world.mjs` | 71 | PKCE, nonce, state, id_token signature and claims, stale `auth_time`, approver binding, IDKit verify bound to this request (nonce, action, signal), duplicate nullifiers, the environment check, HTML escaping, no secret in any output |
 | `automate-trust/scripts/test-trust-arc.mjs` | 81 | exact unit maths, unique amounts, log matching (wrong amount, wrong recipient, replayed tx), block windows, send limits, the decoded raw transaction |
-| `engine-excerpts/test-trust-flow.mjs` | 42 | the whole demo flow through Automate's real engine: paid, verified, approved, a real signed refund, the second refund refused, denied / expired / half-wired, forged callbacks, the 0G record's privacy, seal and verify, and the AI step on the 0G Router. It runs inside Automate's repo |
+| `automate-trust/scripts/test-trust-escrow.mjs` | 23 | the escrow order ID, exact amount and deadline; the operator's signature over the contract's digest; the `approve` and `pay` calldata; `Paid` matching by order and amount; signed `refund` and `release`; a key that isn't the operator is refused |
+| `engine-excerpts/test-trust-flow.mjs` | 46 | the whole demo flow through Automate's real engine: paid, verified, approved, a real signed refund, the second refund refused, denied / expired / half-wired, forged callbacks, the 0G record's privacy, seal and verify, and the AI step on the 0G Router. It runs inside Automate's repo |
 | `tests/` (pytest) | 31 | chunking, PII, RRF, retrieval, embeddings batching, the 0G request id, the API routes, auth |
 
 ## Repository layout
