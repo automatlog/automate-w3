@@ -55,7 +55,7 @@ const JWKS = { keys: [jwk(rsa.publicKey, 'rsa1', 'RS256'), jwk(ec.publicKey, 'ec
 globalThis.fetch = async (url, init = {}) => {
   const u = new URL(String(url))
   seenHosts.add(u.host)
-  calls.push({ url: u.href, method: init.method || 'GET', body: init.body ? String(init.body) : '' })
+  calls.push({ url: u.href, method: init.method || 'GET', body: init.body ? String(init.body) : '', auth: String(init.headers?.authorization || '') })
   const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } })
   if (u.href === 'https://auth.world.org/.well-known/jwks.json') return json(JWKS)
   if (u.href === 'https://auth.world.org/api/v1/token') return tokenBody ? json(tokenBody) : json({ error: 'invalid_grant' }, 400)
@@ -113,7 +113,16 @@ section(2, 'finishApproval')
   let r = await finish(p)
   ok(r.ok === true && r.sub === 'sub-alice' && r.acr.endsWith('/orb') && r.authTime > 0, 'RS256 success')
   const tc = calls.find((c) => c.url.endsWith('/api/v1/token'))
-  ok(tc && tc.body.includes('client_secret=') && tc.body.includes('code_verifier=') && tc.body.includes('grant_type=authorization_code'), 'token call is client_secret_post with the verifier')
+  ok(tc && /^Basic /.test(tc.auth) && !tc.body.includes('client_secret=') && tc.body.includes('code_verifier=') && tc.body.includes('grant_type=authorization_code'), 'token call is client_secret_basic (the portal default) with the verifier')
+  ok(Buffer.from(tc.auth.slice(6), 'base64').toString().startsWith('app_client_test:'), 'Basic credentials are client_id:secret')
+  process.env.WORLD_OIDC_AUTH = 'post'
+  ;({ p } = begin({ workspaceId: 'wsA' }))
+  tokenBody = { id_token: sign(claimsFor(p)) }
+  const nPost = calls.length
+  r = await finish(p)
+  const tcPost = calls.slice(nPost).find((c) => c.url.endsWith('/api/v1/token'))
+  ok(r.ok === true && tcPost && !tcPost.auth && tcPost.body.includes('client_secret=') && tcPost.body.includes('client_id='), 'WORLD_OIDC_AUTH=post sends client_secret_post')
+  delete process.env.WORLD_OIDC_AUTH
   ok(calls.filter((c) => c.url.endsWith('jwks.json')).length === 1, 'JWKS fetched once')
 
   ;({ p } = begin({ workspaceId: 'wsB' }))

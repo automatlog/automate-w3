@@ -176,17 +176,20 @@ export async function finishApproval({ code, state } = {}, pending, { baseUrl } 
     const cfg = worldConfig().approval
     if (!cfg.ready) return fail(`World approval is not set up (missing ${cfg.missing.join(', ')})`)
 
+    /* The portal fixes a client's auth method for life and defaults to
+       client_secret_basic; WORLD_OIDC_AUTH=post for a client registered with
+       client_secret_post (6 Nov). Both per RFC 6749 §2.3.1. */
+    const basic = env('WORLD_OIDC_AUTH').toLowerCase() !== 'post'
+    const form = { grant_type: 'authorization_code', code: String(code), redirect_uri: `${baseUrl}${CALLBACK_PATH}`, code_verifier: o.verifier }
+    if (!basic) Object.assign(form, { client_id: env('WORLD_OIDC_CLIENT_ID'), client_secret: env('WORLD_OIDC_CLIENT_SECRET') })
+    const enc = (s) => encodeURIComponent(s)
     const r = await netFetch(`${issuer()}/api/v1/token`, {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code: String(code),
-        redirect_uri: `${baseUrl}${CALLBACK_PATH}`,
-        client_id: env('WORLD_OIDC_CLIENT_ID'),
-        client_secret: env('WORLD_OIDC_CLIENT_SECRET'),
-        code_verifier: o.verifier,
-      }),
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded', accept: 'application/json',
+        ...(basic ? { authorization: `Basic ${Buffer.from(`${enc(env('WORLD_OIDC_CLIENT_ID'))}:${enc(env('WORLD_OIDC_CLIENT_SECRET'))}`).toString('base64')}` } : {}),
+      },
+      body: new URLSearchParams(form),
     })
     const tok = await r.json().catch(() => ({}))
     if (!r.ok || !tok.id_token) return fail('World refused the sign-in code')
