@@ -191,24 +191,6 @@ docs/
   ethglobal/        the prize research and implementation plan used this weekend
 ```
 
-## Continuity: before and during the event
-
-**Before (pre-existing work):**
-- **Automate** is a private repo, live at [automateplatform.in](https://automateplatform.in) before the event. It already had the flow builder, the WhatsApp Cloud API, AI agents, the Wait step and its resume tick, Recent runs, the flow checks and the AI flow builder.
-- **MetaCortex** is a Python RAG project dated January to June 2026. The seven files reused are kept unchanged in [`knowledge/metacortex_original/`](knowledge/metacortex_original), with their [provenance](knowledge/metacortex_original/PROVENANCE.md).
-
-**During the event (5–7 Nov 2026):**
-- Everything in `automate-trust/`.
-- The five step types and their wiring into Automate's engine (the excerpts).
-- The `knowledge/` package, ported to API embeddings, pgvector and the 0G Router.
-- The architecture diagram and this README.
-
-The dated list is in [CHANGELOG.md](CHANGELOG.md). The history is kept in small commits on purpose: the first commit imports the pre-existing files unchanged, and every later commit is new work.
-
-## How AI was used
-
-This was built with an AI coding assistant (Claude Code) under the author's direction. The author chose the product, the architecture, the sponsors and the security rules (one approval → one payment, strict wires, no personal data on chain), and reviews and owns the result. The details are in [`docs/ai-usage.md`](docs/ai-usage.md). The planning files used this weekend are in [`docs/ethglobal/`](docs/ethglobal).
-
 ## What's next
 
 - Make Human approval the default before every payout and bulk send in Automate.
