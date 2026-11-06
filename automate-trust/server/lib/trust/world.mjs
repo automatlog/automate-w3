@@ -304,7 +304,7 @@ footer{padding:16px;text-align:center;font-size:13px;opacity:.5}
 const shell = (title, body, script = '') => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${escapeHtml(title)}</title><style>${CSS}</style></head>
-<body><main>${body}</main><footer>Secured by World ID · Automate</footer>${script}</body></html>`
+<body><main>${body}</main><footer>Secured by World ID</footer>${script}</body></html>`
 
 function remaining(pending) {
   const s = Math.round((Number(pending?.expiresAt) - Date.now()) / 1000)

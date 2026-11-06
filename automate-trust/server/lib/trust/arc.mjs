@@ -490,6 +490,7 @@ export function payPageHtml({ pending, statusUrl, state = 'open', txHash = '', m
       <p class="amt">${esc(amount)}</p>
       <p class="note">Held safely in escrow on Arc until your order is confirmed. If nobody acts, you can take it back after 14 days.</p>
       <button id="pay" class="btn" type="button">Pay with wallet</button>
+      <a id="mm" class="btn" hidden>Open in MetaMask</a>
       <p id="msg" class="note" role="status"></p>
       <div class="box"><span class="k">Escrow contract</span><code>${esc(cfg.escrow)}</code></div>
       <p class="note">Your wallet asks twice: once to allow the USDC, once to pay. Testnet USDC on Arc: <a class="link" href="https://faucet.circle.com" rel="noopener">faucet.circle.com</a>.</p>`
@@ -498,6 +499,7 @@ export function payPageHtml({ pending, statusUrl, state = 'open', txHash = '', m
       <p class="amt">${esc(amount)}</p>
       <p class="note">Send exactly this amount; the last digits identify your payment.</p>
       <button id="pay" class="btn" type="button">Pay with wallet</button>
+      <a id="mm" class="btn" hidden>Open in MetaMask</a>
       <p id="msg" class="note" role="status"></p>
       <div class="box"><span class="k">Pay to</span><code id="addr">${esc(cfg.merchant)}</code>
         <button id="copy" class="ghost" type="button">Copy address</button></div>
@@ -509,6 +511,7 @@ export function payPageHtml({ pending, statusUrl, state = 'open', txHash = '', m
 const C=${jsonForScript(cfg)};
 const $=id=>document.getElementById(id);const say=t=>{$('msg').textContent=t};
 const pad=h=>h.replace(/^0x/,'').toLowerCase().padStart(64,'0');
+setTimeout(()=>{if(window.ethereum)return;const a=$('mm');a.href='https://metamask.app.link/dapp/'+location.host+location.pathname;a.hidden=false;$('pay').hidden=true;say('No wallet in this browser. Tap Open in MetaMask to pay there.')},800);
 const wait=async(eth,h)=>{for(let i=0;i<90;i++){const r=await eth.request({method:'eth_getTransactionReceipt',params:[h]});if(r)return r.status!=='0x0';await new Promise(x=>setTimeout(x,2000))}return false};
 $('pay').onclick=async()=>{
   const eth=window.ethereum;if(!eth){say('Open this link in a wallet browser (MetaMask) to pay.');return}
@@ -531,6 +534,7 @@ setInterval(poll,4000);
 const C=${jsonForScript(cfg)};const Q=${jsonForScript(eip681)};
 const $=id=>document.getElementById(id);const say=t=>{$('msg').textContent=t};
 const pad=h=>h.replace(/^0x/,'').toLowerCase().padStart(64,'0');
+setTimeout(()=>{if(window.ethereum)return;const a=$('mm');a.href='https://metamask.app.link/dapp/'+location.host+location.pathname;a.hidden=false;$('pay').hidden=true;say('No wallet in this browser. Tap Open in MetaMask, or scan the code or copy the address below.')},800);
 $('copy').onclick=async()=>{try{await navigator.clipboard.writeText(C.merchant);$('copy').textContent='Copied'}catch{say('Select the address and copy it by hand.')}};
 $('pay').onclick=async()=>{
   const eth=window.ethereum;if(!eth){say('No wallet found in this browser. Scan the code or copy the address instead.');return}
@@ -563,6 +567,8 @@ h1{font-size:22px;font-weight:600;margin:0 0 8px;overflow-wrap:anywhere}
 .tag{display:inline-block;margin:0 0 12px;padding:4px 12px;border-radius:8px;background:var(--accent);color:#0B0D0C;font-weight:700}
 .note{color:var(--dim);font-size:14px;margin:8px 0 16px}
 .btn{width:100%;padding:14px 16px;border:0;border-radius:12px;background:var(--accent);color:#0B0D0C;font:inherit;font-weight:700;cursor:pointer}
+a.btn{display:block;text-align:center;text-decoration:none}
+[hidden]{display:none!important}
 .ghost{margin-top:8px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--ink);font:inherit;font-size:14px;cursor:pointer}
 .box{margin:16px 0;padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .k{display:block;color:var(--dim);font-size:13px;margin-bottom:4px}
@@ -573,5 +579,5 @@ code{display:block;font:13px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:a
 .qr .link{color:#0B0D0C}
 footer{margin-top:32px;color:var(--dim);font-size:13px}
 </style></head>
-<body><main>${body}<footer>Paid in USDC on Arc &middot; Automate</footer></main>${script}</body></html>`
+<body><main>${body}<footer>Paid in USDC on Arc</footer></main>${script}</body></html>`
 }

@@ -283,7 +283,7 @@ section(6, 'pages')
     ...['verified', 'already', 'cancelled', 'expired', 'error'].map((state) => W.humanPageHtml({ pending: evil, action: 'refund', state })),
   ]
   ok(pages.every((h) => !h.includes('<script>alert(1)') && !h.includes('<img src=x') && !h.includes('<b>x</b>')), 'titles, summaries and messages are escaped on every state')
-  ok(pages.every((h) => h.startsWith('<!doctype html>') && h.includes('Secured by World ID · Automate')), 'full documents with the footer')
+  ok(pages.every((h) => h.startsWith('<!doctype html>') && h.includes('<footer>Secured by World ID</footer>') && !/Automate/.test(h)), 'full documents with the footer, and no platform name (white-label)')
   ok(pages[0].includes('Approve with World ID') && pages[0].includes('method="post" action="/d"') && pages[0].includes('&quot;2&quot;'), 'approval page: approve link, deny form, attributes escaped')
   const human = pages.find((h) => h.includes('idkit-core@4.6.0'))
   ok(human && human.includes('qrcode-generator@1.4.4') && human.includes('Open World App') && human.includes('action="/c"'), 'human page: idkit, QR, deep link, cancel')

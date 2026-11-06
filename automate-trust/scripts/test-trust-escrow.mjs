@@ -128,6 +128,8 @@ ok(html.includes(ESCROW) && /Step 1 of 2/.test(html) && /Step 2 of 2/.test(html)
 ok(!/ethereum:0x3600/.test(html), 'no EIP-681 QR in escrow mode (one transfer cannot pay into escrow)')
 ok(!html.includes('<b>') && html.includes('&lt;b&gt;'), 'the label is escaped')
 ok(!html.includes(op.privateKey.slice(2)), 'no key in the page')
+ok(/<a id="mm" class="btn" hidden>Open in MetaMask<\/a>/.test(html) && html.includes("'https://metamask.app.link/dapp/'+location.host+location.pathname"), "opened where there is no wallet (WhatsApp's browser), the page offers Open in MetaMask for this same page")
+ok(html.includes('<footer>Paid in USDC on Arc</footer>') && !/Automate/.test(html), "no platform name on the customer's page (white-label)")
 
 ok(outside.length === 0, 'nothing outside the fake RPC was reached', outside.join(', '))
 console.log(`${passed} passed${failed ? `, ${failed} failed` : ''}`)
