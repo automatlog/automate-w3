@@ -73,9 +73,13 @@ globalThis.fetch = async (url, init = {}) => {
       case 'eth_estimateGas': return reply(hex(60_000))
       case 'eth_sendRawTransaction': chain.raw.push(params[0]); return reply(Transaction.from(params[0]).hash)
       case 'eth_getTransactionReceipt': return reply({ status: '0x1', blockNumber: hex(chain.block) })
+      /* TrustEscrow's operator() — the server wallet, as on the real deploy (section 12). */
+      case 'eth_call': return reply(pad(wallet.address))
       default: return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: `no ${method}` } }), { status: 200 })
     }
   }
+  /* The 0G Router, for the demo recipe's AI step (section 12). */
+  if (u.hostname === 'router-api.0g.ai') return new Response(JSON.stringify({ id: 'chatcmpl-demo', model: 'glm-5.2', choices: [{ message: { content: '{"item":"coffee","quantity":"2"}' } }], x_0g_trace: { request_id: '0g-req-demo' } }), { status: 200 })
   if (u.hostname === 'db.test') return new Response(JSON.stringify(u.pathname.startsWith('/rest/v1/') && (init.method || 'GET') === 'GET' ? [] : { ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   outside.push(u.hostname)
   throw new Error(`network call outside the test: ${url}`)
@@ -307,6 +311,33 @@ check('…and the customer is told with the tx', out.some((x) => text(x.payload)
 check('…and the trust record says "refunded" with the tx', events.some((e) => e.type === 'trust' && e.detail?.step === 'usdc_send' && e.detail.outcome === 'refunded' && e.detail.tx === etx?.hash))
 const lintEscrow = lintGraph(escrowFlow)
 check('a refund/release Send USDC needs no amount in the flow checks', !lintEscrow.some((i) => i.nodeId === 'refund' && i.level === 'error'), JSON.stringify(lintEscrow.filter((i) => i.nodeId === 'refund')))
+
+/* ── 12. the "Trust Layer demo" recipe, walked end to end (escrow on) ────── */
+const { recipeById, expandRecipe } = await imp('shared/recipes.js')
+const demo = expandRecipe(recipeById('trust-demo'))
+const lintDemo = lintGraph(demo)
+check('the demo recipe expands and the flow checks find no error', demo.nodes.length === 17 && !lintDemo.some((i) => i.level === 'error'), JSON.stringify(lintDemo.filter((i) => i.level === 'error')))
+const dm = person()
+out = await dm.say('demo order: 2 coffees', demo)
+const demoPay = P.openAt({ slug: 'shop', from: dm.from, nodeId: 'pay' })
+check('"demo" → the AI step on 0G reads the order → summary → an escrow pay link', /2 × coffee/.test(text(out[0]?.payload)) && /\/webhook\/trust\/pay\/[0-9a-f]{24}$/.test(link(out[1]?.payload)) && demoPay?.data?.mode === 'escrow', JSON.stringify({ out: out.map((x) => text(x.payload) || link(x.payload)), mode: demoPay?.data?.mode }))
+check('…and the AI step kept its 0G request id', events.some((e) => e.type === 'trust' && e.detail?.step === 'aistep' && e.detail.requestId === '0g-req-demo'), JSON.stringify(events.filter((e) => e.detail?.step === 'aistep').map((e) => e.detail)))
+await P.resolvePending(demoPay.id, 'paid', { usdc_tx: `0x${'cd'.repeat(32)}`, usdc_payer: PAYER, usdc_amount: demoPay.data.amountText, usdc_order: demoPay.data.orderId })
+out = await dm.resume('pay', demo)
+check('paid → "Request refund" button', out.length === 1 && out[0].payload?.interactive?.type === 'button' && /held in escrow/.test(text(out[0].payload)), JSON.stringify(out.map((x) => x.payload)))
+out = await dm.say('Request refund', demo)
+check('the tap → the World ID link', /\/webhook\/trust\/human\/[0-9a-f]{24}$/.test(link(out[0]?.payload)), JSON.stringify(out.map((x) => x.payload)))
+await P.resolvePending(P.openAt({ slug: 'shop', from: dm.from, nodeId: 'human' }).id, 'verified', { human_id: 'h-demo' })
+await dm.resume('human', demo)
+const demoAp = P.openAt({ slug: 'shop', from: dm.from, nodeId: 'approve' })
+check('verified → the owner\'s approval waits, summary filled in', demoAp?.status === 'pending' && /Refund .*USDC to Asha \(2 × coffee\)/.test(demoAp.data?.summary || ''), JSON.stringify(demoAp?.data))
+await P.resolvePending(demoAp.id, 'approved', { approval_by: 'sub-demo' })
+n0 = chain.raw.length
+out = await dm.resume('approve', demo)
+const dtx = chain.raw[n0] ? Transaction.from(chain.raw[n0]) : null
+const dcall = dtx ? new Interface(['function refund(bytes32 orderId)']).parseTransaction({ data: dtx.data }) : null
+check('approved → ONE refund(orderId) to the escrow → the customer gets the tx', chain.raw.length === n0 + 1 && dcall?.args[0] === demoPay.data.orderId && out.some((x) => text(x.payload) === `💸 Refunded from escrow on Arc.\nTx: ${dtx?.hash}`), JSON.stringify({ n: chain.raw.length - n0, out: out.map((x) => text(x.payload)) }))
+check('…and the run passed Proof on 0G, so it is sealed when it ends', events.some((e) => e.msg === 'this run will be sealed on 0G when it ends'), JSON.stringify(events.slice(-3)))
 delete process.env.ARC_ESCROW_ADDRESS
 
 P.flushPending()
